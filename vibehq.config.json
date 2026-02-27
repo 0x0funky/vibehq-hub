@@ -1,32 +1,36 @@
 {
-    "team": "dexlessai",
-    "hub": {
-        "port": 3001
-    },
-    "agents": [
+    "teams": [
         {
-            "name": "Alex",
-            "role": "Backend Engineer",
-            "cli": "claude",
-            "cwd": "D:\\dexless-aicompany\\Dexless_backend-main"
-        },
-        {
-            "name": "Jordan",
-            "role": "Frontend Engineer",
-            "cli": "claude",
-            "cwd": "D:\\dexless-aicompany\\Dexless_front-main"
-        },
-        {
-            "name": "Bob",
-            "role": "AI Engineer",
-            "cli": "claude",
-            "cwd": "D:\\dexless-aicompany\\DexlessAI"
-        },
-        {
-            "name": "Alice",
-            "role": "Product Manager",
-            "cli": "claude",
-            "cwd": "D:\\dexless-aicompany"
+            "name": "dexlessai",
+            "hub": {
+                "port": 3001
+            },
+            "agents": [
+                {
+                    "name": "Alex",
+                    "role": "Backend Engineer",
+                    "cli": "claude",
+                    "cwd": "D:\\dexless-aicompany\\Dexless_backend-main"
+                },
+                {
+                    "name": "Jordan",
+                    "role": "Frontend Engineer",
+                    "cli": "claude",
+                    "cwd": "D:\\dexless-aicompany\\Dexless_front-main"
+                },
+                {
+                    "name": "Bob",
+                    "role": "AI Engineer",
+                    "cli": "claude",
+                    "cwd": "D:\\dexless-aicompany\\DexlessAI"
+                },
+                {
+                    "name": "Alice",
+                    "role": "Product Manager",
+                    "cli": "claude",
+                    "cwd": "D:\\dexless-aicompany"
+                }
+            ]
         }
     ]
 }

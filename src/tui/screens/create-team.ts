@@ -2,7 +2,7 @@
 // Screen: Create Team — Interactive team creation wizard
 // ============================================================
 
-import { writeFileSync } from 'fs';
+import { writeFileSync, existsSync, readFileSync } from 'fs';
 import { c, screen, cursor, box, getWidth } from '../renderer.js';
 import { prompt, confirm, selectInput } from '../input.js';
 
@@ -68,16 +68,30 @@ export async function createTeamScreen(): Promise<string | null> {
     const ok = await confirm('  Save config?');
     if (!ok) return null;
 
-    // Save
-    const config: TeamConfig = {
-        team: teamName,
+    // Save — append to existing config or create new
+    const filename = `vibehq.config.json`;
+    let existingTeams: any[] = [];
+
+    if (existsSync(filename)) {
+        try {
+            const raw = JSON.parse(readFileSync(filename, 'utf-8'));
+            if (raw.teams && Array.isArray(raw.teams)) {
+                existingTeams = raw.teams;
+            } else if (raw.team && raw.agents) {
+                // Legacy format → convert
+                existingTeams = [{ name: raw.team, hub: raw.hub, agents: raw.agents }];
+            }
+        } catch { }
+    }
+
+    existingTeams.push({
+        name: teamName,
         hub: { port },
         agents,
-    };
+    });
 
-    const filename = `vibehq.config.json`;
-    writeFileSync(filename, JSON.stringify(config, null, 4) + '\n');
-    console.log(`\n  ${c.green}✓${c.reset} Saved to ${c.bold}${filename}${c.reset}`);
+    writeFileSync(filename, JSON.stringify({ teams: existingTeams }, null, 4) + '\n');
+    console.log(`\n  ${c.green}✓${c.reset} Saved to ${c.bold}${filename}${c.reset} (${existingTeams.length} team${existingTeams.length > 1 ? 's' : ''})`);
     console.log(`  ${c.dim}Run "vibehq start" to launch your team${c.reset}\n`);
 
     return filename;

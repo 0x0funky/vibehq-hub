@@ -3,12 +3,13 @@
 // ============================================================
 
 import { startHub } from '../src/hub/server.js';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { exec } from 'child_process';
 import { c, screen, cursor } from '../src/tui/renderer.js';
 import { welcomeScreen } from '../src/tui/screens/welcome.js';
 import { createTeamScreen } from '../src/tui/screens/create-team.js';
 import { DashboardScreen } from '../src/tui/screens/dashboard.js';
+import { selectMenu } from '../src/tui/menu.js';
 import { prompt } from '../src/tui/input.js';
 
 // --- Types ---
@@ -19,7 +20,19 @@ interface AgentConfig {
     cwd: string;
 }
 
-interface VibehqConfig {
+interface TeamConfig {
+    name: string;
+    hub: { port: number };
+    agents: AgentConfig[];
+}
+
+/** New multi-team format */
+interface VibehqMultiConfig {
+    teams: TeamConfig[];
+}
+
+/** Legacy single-team format */
+interface VibehqLegacyConfig {
     team: string;
     hub: { port: number };
     agents: AgentConfig[];
@@ -57,23 +70,55 @@ Options:
     return { command, configPath };
 }
 
-// --- Load config ---
-function loadConfig(configPath: string): VibehqConfig | null {
+// --- Load config (supports both legacy and multi-team format) ---
+function loadTeams(configPath: string): TeamConfig[] | null {
     if (!existsSync(configPath)) return null;
     try {
-        return JSON.parse(readFileSync(configPath, 'utf-8'));
+        const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
+
+        // Multi-team format: { teams: [...] }
+        if (raw.teams && Array.isArray(raw.teams)) {
+            return raw.teams;
+        }
+
+        // Legacy single-team format: { team, hub, agents }
+        if (raw.team && raw.agents) {
+            return [{
+                name: raw.team,
+                hub: raw.hub,
+                agents: raw.agents,
+            }];
+        }
+
+        return null;
     } catch {
         return null;
     }
 }
 
-// --- Spawn agents ---
-function spawnAgents(config: VibehqConfig): void {
-    const { team, hub, agents } = config;
-    const hubUrl = `ws://localhost:${hub.port}`;
+// --- Select team ---
+async function selectTeam(teams: TeamConfig[]): Promise<TeamConfig> {
+    if (teams.length === 1) return teams[0];
 
-    for (const agent of agents) {
-        const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team}" --hub "${hubUrl}" -- ${agent.cli}`;
+    process.stdout.write(cursor.show);
+    console.log('');
+
+    const items = teams.map(t => ({
+        label: t.name,
+        description: `${t.agents.length} agents, port ${t.hub.port}`,
+        value: t.name,
+    }));
+
+    const choice = await selectMenu(items, '⚡ Select Team');
+    return teams.find(t => t.name === choice)!;
+}
+
+// --- Spawn agents ---
+function spawnAgents(team: TeamConfig): void {
+    const hubUrl = `ws://localhost:${team.hub.port}`;
+
+    for (const agent of team.agents) {
+        const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}" -- ${agent.cli}`;
 
         if (process.platform === 'win32') {
             const wtCmd = `wt -w new --title "${agent.name}" -d "${agent.cwd}" cmd /k "chcp 65001 >nul && ${spawnCmd}"`;
@@ -84,7 +129,6 @@ function spawnAgents(config: VibehqConfig): void {
             });
         } else {
             exec(`osascript -e 'tell app "Terminal" to do script "cd \\"${agent.cwd}\\" && ${spawnCmd}"'`, () => {
-                // Fallback for non-macOS
                 exec(`bash -c 'cd "${agent.cwd}" && ${spawnCmd}'`);
             });
         }
@@ -95,47 +139,58 @@ function spawnAgents(config: VibehqConfig): void {
 
 // --- Start team flow ---
 async function startTeam(configPath: string): Promise<void> {
-    const config = loadConfig(configPath);
-    if (!config) {
+    const teams = loadTeams(configPath);
+    if (!teams || teams.length === 0) {
         console.log(`\n  ${c.yellow}⚠${c.reset} Config not found: ${c.bold}${configPath}${c.reset}`);
         console.log(`  ${c.dim}Run "vibehq create" or "vibehq init" first${c.reset}\n`);
         return;
     }
 
+    // Select team if multiple
+    const team = await selectTeam(teams);
+
     process.stdout.write(screen.clear);
-    console.log(`\n  ${c.bold}${c.brightCyan}⚡ Starting team "${config.team}"${c.reset}\n`);
+    console.log(`\n  ${c.bold}${c.brightCyan}⚡ Starting team "${team.name}"${c.reset}\n`);
 
     // Start Hub
-    console.log(`  ${c.green}✓${c.reset} Hub started on port ${config.hub.port}`);
-    startHub({ port: config.hub.port, verbose: false });
+    console.log(`  ${c.green}✓${c.reset} Hub started on port ${team.hub.port}`);
+    startHub({ port: team.hub.port, verbose: false });
 
     // Spawn agents
-    console.log(`  ${c.bold}Spawning ${config.agents.length} agents...${c.reset}\n`);
+    console.log(`  ${c.bold}Spawning ${team.agents.length} agents...${c.reset}\n`);
     await new Promise(r => setTimeout(r, 500));
-    spawnAgents(config);
+    spawnAgents(team);
 
     // Launch dashboard
     console.log(`\n  ${c.dim}Launching dashboard...${c.reset}\n`);
     await new Promise(r => setTimeout(r, 2000));
 
-    const dashboard = new DashboardScreen(config);
+    const dashboard = new DashboardScreen({
+        team: team.name,
+        hub: team.hub,
+        agents: team.agents,
+    });
     dashboard.start();
 }
 
 // --- Dashboard-only flow ---
 async function dashboardOnly(configPath: string): Promise<void> {
-    let config = loadConfig(configPath);
-    if (!config) {
-        // Minimal config for dashboard-only mode
+    const teams = loadTeams(configPath);
+    let dashConfig: { team: string; hub: { port: number }; agents: AgentConfig[] };
+
+    if (teams && teams.length > 0) {
+        const team = await selectTeam(teams);
+        dashConfig = { team: team.name, hub: team.hub, agents: team.agents };
+    } else {
         const portStr = await prompt('Hub port', '3001');
-        config = {
+        dashConfig = {
             team: 'default',
             hub: { port: parseInt(portStr, 10) || 3001 },
             agents: [],
         };
     }
 
-    const dashboard = new DashboardScreen(config);
+    const dashboard = new DashboardScreen(dashConfig);
     dashboard.start();
 }
 
@@ -147,7 +202,7 @@ async function interactive(configPath: string): Promise<void> {
         switch (choice) {
             case 'start':
                 await startTeam(configPath);
-                return; // Dashboard takes over
+                return;
 
             case 'create': {
                 process.stdout.write(cursor.show);
@@ -174,18 +229,21 @@ async function interactive(configPath: string): Promise<void> {
     }
 }
 
-// --- Init (backward compat) ---
+// --- Init ---
 function initConfig(): void {
-    const example: VibehqConfig = {
-        team: 'my-team',
-        hub: { port: 3001 },
-        agents: [
-            { name: 'Alex', role: 'Backend Engineer', cli: 'claude', cwd: 'D:\\my-project\\backend' },
-            { name: 'Jordan', role: 'Frontend Engineer', cli: 'codex', cwd: 'D:\\my-project\\frontend' },
+    const config: VibehqMultiConfig = {
+        teams: [
+            {
+                name: 'my-team',
+                hub: { port: 3001 },
+                agents: [
+                    { name: 'Alex', role: 'Backend Engineer', cli: 'claude', cwd: 'D:\\my-project\\backend' },
+                    { name: 'Jordan', role: 'Frontend Engineer', cli: 'claude', cwd: 'D:\\my-project\\frontend' },
+                ],
+            },
         ],
     };
-    const { writeFileSync } = require('fs');
-    writeFileSync('vibehq.config.json', JSON.stringify(example, null, 4) + '\n');
+    writeFileSync('vibehq.config.json', JSON.stringify(config, null, 4) + '\n');
     console.log(`${c.green}✓${c.reset} Created ${c.bold}vibehq.config.json${c.reset}`);
 }
 
@@ -206,7 +264,6 @@ switch (command) {
         dashboardOnly(configPath);
         break;
     default:
-        // No command = interactive mode
         interactive(configPath);
         break;
 }
