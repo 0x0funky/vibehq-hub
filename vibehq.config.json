@@ -1,5 +1,5 @@
 {
-    "team": "dexless",
+    "team": "dexlessai",
     "hub": {
         "port": 3001
     },
@@ -8,19 +8,25 @@
             "name": "Alex",
             "role": "Backend Engineer",
             "cli": "claude",
-            "cwd": "D:\\dexless-company\\Dexless_backend-main"
+            "cwd": "D:\\dexless-aicompany\\Dexless_backend-main"
         },
         {
             "name": "Jordan",
             "role": "Frontend Engineer",
-            "cli": "codex",
-            "cwd": "D:\\dexless-company\\Dexless_front-main"
+            "cli": "claude",
+            "cwd": "D:\\dexless-aicompany\\Dexless_front-main"
         },
         {
             "name": "Bob",
             "role": "AI Engineer",
-            "cli": "gemini",
-            "cwd": "D:\\DexlessAI"
+            "cli": "claude",
+            "cwd": "D:\\dexless-aicompany\\DexlessAI"
+        },
+        {
+            "name": "Alice",
+            "role": "Product Manager",
+            "cli": "claude",
+            "cwd": "D:\\dexless-aicompany"
         }
     ]
 }

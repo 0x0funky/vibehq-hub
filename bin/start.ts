@@ -115,7 +115,7 @@ function spawnAgents(config: VibehqConfig): void {
 
         if (process.platform === 'win32') {
             // Use wt.exe with a single escaped command string
-            const wtCmd = `wt -w 0 new-tab --title "${agent.name}" -d "${agent.cwd}" cmd /k ${spawnCmd}`;
+            const wtCmd = `wt -w new --title "${agent.name}" -d "${agent.cwd}" cmd /k ${spawnCmd}`;
             exec(wtCmd, (err) => {
                 if (err) {
                     // Fallback: open a new cmd window
