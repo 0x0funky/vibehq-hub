@@ -165,21 +165,80 @@ async function selectTeam(teams: TeamConfig[]): Promise<TeamConfig> {
     return teams.find(t => t.name === choice)!;
 }
 
+// --- Detect available Linux terminal ---
+function detectLinuxTerminal(): string | null {
+    const terms = ['gnome-terminal', 'konsole', 'xfce4-terminal', 'xterm', 'alacritty', 'kitty'];
+    for (const t of terms) {
+        try { require('child_process').execSync(`which ${t} 2>/dev/null`); return t; } catch { }
+    }
+    return null;
+}
+
+// --- Spawn one agent in a new terminal window ---
+function spawnOneAgent(agent: AgentConfig, team: TeamConfig, hubUrl: string): void {
+    const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}" -- ${agent.cli}`;
+    const safeCmd = spawnCmd.replace(/'/g, "'\\''");
+
+    if (process.platform === 'win32') {
+        // Windows Terminal
+        const wtCmd = `wt -w new --title "${agent.name}" -d "${agent.cwd}" cmd /k "chcp 65001 >nul && ${spawnCmd}"`;
+        exec(wtCmd);
+
+    } else if (process.platform === 'darwin') {
+        // Mac: try iTerm2 first, fall back to Terminal.app
+        const iTermScript = `osascript -e '
+            tell application "iTerm2"
+                create window with default profile
+                tell current session of current window
+                    write text "cd ${agent.cwd.replace(/'/g, "\\'")} && ${safeCmd}"
+                end tell
+            end tell' 2>/dev/null`;
+        const terminalScript = `osascript -e '
+            tell application "Terminal"
+                do script "cd ${agent.cwd.replace(/'/g, "\\'")} && ${safeCmd}"
+                activate
+            end tell'`;
+
+        exec(iTermScript, (err) => {
+            if (err) exec(terminalScript);
+        });
+
+    } else {
+        // Linux: check if inside tmux session first
+        if (process.env.TMUX) {
+            // Already in tmux — open new window
+            exec(`tmux new-window -n "${agent.name}" "cd '${agent.cwd}' && ${safeCmd}; exec $SHELL"`);
+            return;
+        }
+
+        // Try to find a terminal emulator
+        const linuxTerm = detectLinuxTerminal();
+        if (linuxTerm === 'gnome-terminal') {
+            exec(`gnome-terminal --title="${agent.name}" -- bash -c "cd '${agent.cwd}' && ${safeCmd}; exec bash"`);
+        } else if (linuxTerm === 'konsole') {
+            exec(`konsole --new-tab -p tabtitle="${agent.name}" -e bash -c "cd '${agent.cwd}' && ${safeCmd}; exec bash"`);
+        } else if (linuxTerm === 'xfce4-terminal') {
+            exec(`xfce4-terminal --title="${agent.name}" -e "bash -c 'cd \\"${agent.cwd}\\" && ${safeCmd}; exec bash'"`);
+        } else if (linuxTerm === 'xterm') {
+            exec(`xterm -title "${agent.name}" -e bash -c "cd '${agent.cwd}' && ${safeCmd}; exec bash" &`);
+        } else if (linuxTerm) {
+            exec(`${linuxTerm} --title "${agent.name}" -e "bash -c 'cd \\"${agent.cwd}\\" && ${safeCmd}; exec bash'" &`);
+        } else {
+            // No terminal found — suggest tmux and run in background
+            console.log(`  ${c.yellow}⚠${c.reset} No terminal emulator found. Tip: run inside a tmux session for auto window management.`);
+            console.log(`  ${c.dim}Starting ${agent.name} in background...${c.reset}`);
+            exec(`bash -c "cd '${agent.cwd}' && ${safeCmd}" &`);
+        }
+    }
+}
+
 // --- Spawn agents ---
 function spawnAgents(team: TeamConfig): void {
     const hubUrl = `ws://localhost:${team.hub.port}`;
-    spawnedAgentNames = team.agents.map(a => a.name); // Track for killing
+    spawnedAgentNames = team.agents.map(a => a.name);
 
     for (const agent of team.agents) {
-        const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}" -- ${agent.cli}`;
-
-        if (process.platform === 'win32') {
-            const wtCmd = `wt -w new --title "${agent.name}" -d "${agent.cwd}" cmd /k "chcp 65001 >nul && ${spawnCmd}"`;
-            exec(wtCmd);
-        } else {
-            exec(`osascript -e 'tell app "Terminal" to do script "cd \'${agent.cwd}\' && ${spawnCmd}"'`);
-        }
-
+        spawnOneAgent(agent, team, hubUrl);
         console.log(`  ${c.green}↗${c.reset} ${c.bold}${agent.name}${c.reset} ${c.dim}(${agent.cli})${c.reset} → ${c.gray}${agent.cwd}${c.reset}`);
     }
 }
