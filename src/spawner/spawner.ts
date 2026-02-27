@@ -3,6 +3,7 @@
 // ============================================================
 
 import * as pty from 'node-pty';
+import { execSync } from 'child_process';
 import WebSocket from 'ws';
 import { ResponseParser } from './response-parser.js';
 import type {
@@ -15,6 +16,29 @@ import type {
     RelayTaskMessage,
     Agent,
 } from '../shared/types.js';
+
+/**
+ * Resolve a command name to its full path on Windows.
+ * node-pty can't find .cmd/.bat files by name alone.
+ */
+function resolveCommand(command: string): string {
+    if (process.platform !== 'win32') return command;
+
+    try {
+        const result = execSync(`where.exe ${command}`, { encoding: 'utf-8' }).trim();
+        // `where` may return multiple lines; take the first .cmd or .exe match
+        const lines = result.split(/\r?\n/);
+        const cmdMatch = lines.find(l => l.endsWith('.cmd') || l.endsWith('.exe'));
+        const resolved = cmdMatch || lines[0];
+        if (resolved) {
+            console.error(`[Spawner] Resolved "${command}" → ${resolved}`);
+            return resolved;
+        }
+    } catch {
+        // where.exe failed, try as-is
+    }
+    return command;
+}
 
 export interface SpawnerOptions {
     name: string;
@@ -57,12 +81,15 @@ export class AgentSpawner {
     private spawnCli(): void {
         const { command, args } = this.options;
 
+        // Resolve command path (important on Windows for .cmd files)
+        const resolvedCommand = resolveCommand(command);
+
         // Get terminal size
         const cols = process.stdout.columns || 80;
         const rows = process.stdout.rows || 24;
 
         // Spawn in PTY
-        this.ptyProcess = pty.spawn(command, args, {
+        this.ptyProcess = pty.spawn(resolvedCommand, args, {
             name: 'xterm-color',
             cols,
             rows,
