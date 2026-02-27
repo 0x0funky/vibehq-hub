@@ -7,7 +7,8 @@
   "types": "./dist/index.d.ts",
   "bin": {
     "vibehq-hub": "./dist/bin/hub.js",
-    "vibehq-agent": "./dist/bin/agent.js"
+    "vibehq-agent": "./dist/bin/agent.js",
+    "vibehq-spawn": "./dist/bin/spawn.js"
   },
   "files": [
     "dist/"

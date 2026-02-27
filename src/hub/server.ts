@@ -19,6 +19,15 @@ export function startHub(options: HubOptions): WebSocketServer {
 
     const wss = new WebSocketServer({ port });
 
+    wss.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+            console.error(`[AgentHub] Error: Port ${port} is already in use.`);
+            console.error(`[AgentHub] Kill the process using it or use a different port: vibehq-hub --port <other>`);
+            process.exit(1);
+        }
+        console.error(`[AgentHub] Server error:`, err);
+    });
+
     wss.on('connection', (ws: WebSocket) => {
         if (verbose) {
             console.log(`[Hub] New connection`);
