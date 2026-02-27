@@ -17,6 +17,7 @@ export default defineConfig({
     sourcemap: true,
     clean: true,
     shims: false,
+    external: ['node-pty'],
     banner: ({ format }) => {
         // Add shebang for bin entry points
         return { js: '' };

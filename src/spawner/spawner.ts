@@ -1,10 +1,9 @@
 // ============================================================
-// Agent Spawner — wraps a CLI process + Hub connection
+// Agent Spawner — wraps a CLI process (PTY) + Hub connection
 // ============================================================
 
-import { spawn, ChildProcess } from 'child_process';
+import * as pty from 'node-pty';
 import WebSocket from 'ws';
-import { randomUUID } from 'crypto';
 import { ResponseParser } from './response-parser.js';
 import type {
     AgentRegisterMessage,
@@ -27,7 +26,7 @@ export interface SpawnerOptions {
 }
 
 export class AgentSpawner {
-    private child: ChildProcess | null = null;
+    private ptyProcess: pty.IPty | null = null;
     private ws: WebSocket | null = null;
     private parser: ResponseParser;
     private options: SpawnerOptions;
@@ -40,10 +39,10 @@ export class AgentSpawner {
     }
 
     /**
-     * Start the spawner: spawn CLI process + connect to Hub.
+     * Start the spawner: spawn CLI in PTY + connect to Hub.
      */
     async start(): Promise<void> {
-        // 1. Spawn the CLI process
+        // 1. Spawn the CLI process in a pseudo-terminal
         this.spawnCli();
 
         // 2. Connect to Hub
@@ -53,41 +52,54 @@ export class AgentSpawner {
     }
 
     /**
-     * Spawn the CLI as a child process with interactive stdin/stdout.
+     * Spawn the CLI in a pseudo-terminal so interactive UIs work.
      */
     private spawnCli(): void {
         const { command, args } = this.options;
 
-        this.child = spawn(command, args, {
-            stdio: ['pipe', 'pipe', 'inherit'], // stdin: pipe, stdout: pipe, stderr: inherit
-            shell: true,
-            env: { ...process.env },
+        // Get terminal size
+        const cols = process.stdout.columns || 80;
+        const rows = process.stdout.rows || 24;
+
+        // Spawn in PTY
+        this.ptyProcess = pty.spawn(command, args, {
+            name: 'xterm-color',
+            cols,
+            rows,
+            cwd: process.cwd(),
+            env: process.env as { [key: string]: string },
         });
 
-        // Pipe user's stdin to child's stdin
-        process.stdin.setRawMode?.(false);
+        // Handle terminal resize
+        process.stdout.on('resize', () => {
+            const newCols = process.stdout.columns || 80;
+            const newRows = process.stdout.rows || 24;
+            this.ptyProcess?.resize(newCols, newRows);
+        });
+
+        // Set raw mode on stdin so keypresses go straight through
+        if (process.stdin.isTTY) {
+            process.stdin.setRawMode(true);
+        }
+        process.stdin.resume();
+
+        // Pipe user's stdin to PTY
         process.stdin.on('data', (data) => {
-            this.child?.stdin?.write(data);
+            this.ptyProcess?.write(data.toString());
         });
 
-        // Pipe child's stdout through response parser to user's stdout
-        this.child.stdout?.on('data', (data: Buffer) => {
-            const text = data.toString();
-            const userOutput = this.parser.feed(text);
+        // Pipe PTY output through response parser to user's stdout
+        this.ptyProcess.onData((data: string) => {
+            const userOutput = this.parser.feed(data);
             if (userOutput) {
                 process.stdout.write(userOutput);
             }
         });
 
-        this.child.on('exit', (code) => {
-            console.error(`\n[Spawner] CLI process exited with code ${code}`);
+        this.ptyProcess.onExit(({ exitCode }) => {
+            console.error(`\n[Spawner] CLI process exited with code ${exitCode}`);
             this.cleanup();
-            process.exit(code ?? 0);
-        });
-
-        this.child.on('error', (err) => {
-            console.error(`[Spawner] Failed to spawn "${command}":`, err.message);
-            process.exit(1);
+            process.exit(exitCode);
         });
     }
 
@@ -165,9 +177,9 @@ export class AgentSpawner {
         // Set up response capture BEFORE injecting
         const responsePromise = this.parser.expectResponse(msg.requestId);
 
-        // Inject the question into CLI's stdin
+        // Inject the question into CLI's PTY stdin
         const injectedPrompt = this.buildQuestionPrompt(msg.fromAgent, msg.question);
-        this.child?.stdin?.write(injectedPrompt + '\n');
+        this.ptyProcess?.write(injectedPrompt + '\r');
 
         try {
             // Wait for the CLI to respond (captured by response parser)
@@ -202,16 +214,14 @@ export class AgentSpawner {
         console.error(`\n[Spawner] 📋 Task from ${msg.fromAgent} (${msg.priority}): ${msg.task.substring(0, 80)}...`);
 
         const injectedPrompt = this.buildTaskPrompt(msg.fromAgent, msg.task, msg.priority);
-        this.child?.stdin?.write(injectedPrompt + '\n');
+        this.ptyProcess?.write(injectedPrompt + '\r');
     }
 
     /**
      * Build the prompt to inject for a teammate question.
-     * Asks the CLI to wrap its response in markers for capture.
      */
     private buildQuestionPrompt(fromAgent: string, question: string): string {
         return [
-            ``,
             `[Teammate Message from ${fromAgent}]`,
             `${question}`,
             ``,
@@ -220,7 +230,7 @@ export class AgentSpawner {
             `(your response here)`,
             `[TEAM_RESPONSE_END]`,
             ``,
-            `Respond directly and concisely to the question. Do not include the markers in your explanation, just use them to wrap your answer.`,
+            `Respond directly and concisely to the question.`,
         ].join('\n');
     }
 
@@ -229,11 +239,10 @@ export class AgentSpawner {
      */
     private buildTaskPrompt(fromAgent: string, task: string, priority: string): string {
         return [
-            ``,
             `[Task Assignment from ${fromAgent}] (Priority: ${priority})`,
             `${task}`,
             ``,
-            `Please work on this task. This was assigned by your teammate ${fromAgent}.`,
+            `Please work on this task assigned by your teammate ${fromAgent}.`,
         ].join('\n');
     }
 
@@ -282,5 +291,8 @@ export class AgentSpawner {
     private cleanup(): void {
         this.parser.destroy();
         this.ws?.close();
+        if (process.stdin.isTTY) {
+            process.stdin.setRawMode(false);
+        }
     }
 }
