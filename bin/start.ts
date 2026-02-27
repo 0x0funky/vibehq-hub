@@ -96,6 +96,17 @@ function loadTeams(configPath: string): TeamConfig[] | null {
     }
 }
 
+// --- Check if port is available ---
+async function checkPort(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+        const net = require('net');
+        const server = net.createServer();
+        server.once('error', () => resolve(false));
+        server.once('listening', () => { server.close(); resolve(true); });
+        server.listen(port);
+    });
+}
+
 // --- Select team ---
 async function selectTeam(teams: TeamConfig[]): Promise<TeamConfig> {
     if (teams.length === 1) return teams[0];
@@ -105,7 +116,7 @@ async function selectTeam(teams: TeamConfig[]): Promise<TeamConfig> {
 
     const items = teams.map(t => ({
         label: t.name,
-        description: `${t.agents.length} agents, port ${t.hub.port}`,
+        description: `${t.agents.length} agent${t.agents.length !== 1 ? 's' : ''}, port ${t.hub.port}`,
         value: t.name,
     }));
 
@@ -121,16 +132,17 @@ function spawnAgents(team: TeamConfig): void {
         const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}" -- ${agent.cli}`;
 
         if (process.platform === 'win32') {
-            const wtCmd = `wt -w new --title "${agent.name}" -d "${agent.cwd}" cmd /k "chcp 65001 >nul && ${spawnCmd}"`;
-            exec(wtCmd, (err) => {
+            // Use PowerShell Start-Process for reliable quoting
+            const cwdEscaped = agent.cwd.replace(/\\/g, '\\\\');
+            const psCmd = `Start-Process wt -ArgumentList "-w new --title '${agent.name}' -d '${agent.cwd}' cmd /k 'chcp 65001 >nul && ${spawnCmd}'"`;
+            exec(`powershell -Command "${psCmd}"`, (err) => {
                 if (err) {
-                    exec(`start "${agent.name}" cmd /k "cd /d "${agent.cwd}" && chcp 65001 >nul && ${spawnCmd}"`);
+                    // Fallback: direct wt call
+                    exec(`wt -w new --title "${agent.name}" -d "${agent.cwd}" cmd /k "chcp 65001 >nul && ${spawnCmd}"`);
                 }
             });
         } else {
-            exec(`osascript -e 'tell app "Terminal" to do script "cd \\"${agent.cwd}\\" && ${spawnCmd}"'`, () => {
-                exec(`bash -c 'cd "${agent.cwd}" && ${spawnCmd}'`);
-            });
+            exec(`osascript -e 'tell app "Terminal" to do script "cd \'${agent.cwd}\' && ${spawnCmd}"'`);
         }
 
         console.log(`  ${c.green}↗${c.reset} ${c.bold}${agent.name}${c.reset} ${c.dim}(${agent.cli})${c.reset} → ${c.gray}${agent.cwd}${c.reset}`);
@@ -149,6 +161,18 @@ async function startTeam(configPath: string): Promise<void> {
     // Select team if multiple
     const team = await selectTeam(teams);
 
+    // Check port availability
+    const portOk = await checkPort(team.hub.port);
+    if (!portOk) {
+        process.stdout.write(screen.clear);
+        console.log(`\n  ${c.red}✗${c.reset} Port ${c.bold}${team.hub.port}${c.reset} is already in use!\n`);
+        console.log(`  ${c.dim}Another hub may already be running on this port.${c.reset}`);
+        console.log(`  ${c.dim}Try changing the port in vibehq.config.json, or use:\n${c.reset}`);
+        console.log(`  ${c.cyan}vibehq dashboard${c.reset}  ${c.dim}— to connect to the existing hub${c.reset}\n`);
+        await new Promise(r => setTimeout(r, 300));
+        return;
+    }
+
     process.stdout.write(screen.clear);
     console.log(`\n  ${c.bold}${c.brightCyan}⚡ Starting team "${team.name}"${c.reset}\n`);
 
@@ -157,20 +181,26 @@ async function startTeam(configPath: string): Promise<void> {
     startHub({ port: team.hub.port, verbose: false });
 
     // Spawn agents
-    console.log(`  ${c.bold}Spawning ${team.agents.length} agents...${c.reset}\n`);
-    await new Promise(r => setTimeout(r, 500));
+    console.log(`  ${c.bold}Spawning ${team.agents.length} agent${team.agents.length !== 1 ? 's' : ''}...${c.reset}\n`);
+    await new Promise(r => setTimeout(r, 800));
     spawnAgents(team);
 
     // Launch dashboard
-    console.log(`\n  ${c.dim}Launching dashboard...${c.reset}\n`);
-    await new Promise(r => setTimeout(r, 2000));
+    console.log(`\n  ${c.dim}Opening dashboard in 3s... Press [q] to quit, [b] to go back${c.reset}\n`);
+    await new Promise(r => setTimeout(r, 3000));
 
-    const dashboard = new DashboardScreen({
+    await runDashboard({
         team: team.name,
         hub: team.hub,
         agents: team.agents,
     });
-    dashboard.start();
+}
+
+// --- Run dashboard (returns on [b], exits on [q]) ---
+async function runDashboard(dashConfig: { team: string; hub: { port: number }; agents: AgentConfig[] }): Promise<void> {
+    const dashboard = new DashboardScreen(dashConfig);
+    await dashboard.start();
+    // User pressed [b] — return to caller
 }
 
 // --- Dashboard-only flow ---
@@ -190,8 +220,7 @@ async function dashboardOnly(configPath: string): Promise<void> {
         };
     }
 
-    const dashboard = new DashboardScreen(dashConfig);
-    dashboard.start();
+    await runDashboard(dashConfig);
 }
 
 // --- Interactive mode ---
@@ -202,7 +231,8 @@ async function interactive(configPath: string): Promise<void> {
         switch (choice) {
             case 'start':
                 await startTeam(configPath);
-                return;
+                // startTeam calls runDashboard which returns on [b] — loop back to menu
+                break;
 
             case 'create': {
                 process.stdout.write(cursor.show);

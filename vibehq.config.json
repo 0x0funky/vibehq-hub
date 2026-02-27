@@ -31,6 +31,20 @@
                     "cwd": "D:\\dexless-aicompany"
                 }
             ]
+        },
+        {
+            "name": "Vibehq",
+            "hub": {
+                "port": 3002
+            },
+            "agents": [
+                {
+                    "name": "Robert",
+                    "role": "AI Engineer",
+                    "cli": "claude",
+                    "cwd": "D:\\agent-hub"
+                }
+            ]
         }
     ]
 }

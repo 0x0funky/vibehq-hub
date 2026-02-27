@@ -34,29 +34,38 @@ export class DashboardScreen {
         this.config = config;
     }
 
-    start(): void {
-        const hubUrl = `ws://localhost:${this.config.hub.port}`;
-        this.connectWithRetry(hubUrl);
+    start(): Promise<'back' | 'quit'> {
+        return new Promise((resolve) => {
+            const hubUrl = `ws://localhost:${this.config.hub.port}`;
+            this.connectWithRetry(hubUrl);
 
-        // Refresh every 2s
-        this.interval = setInterval(() => this.render(), 2000);
+            // Refresh every 2s
+            this.interval = setInterval(() => this.render(), 2000);
 
-        // Keyboard
-        if (process.stdin.isTTY) {
-            process.stdin.setRawMode(true);
-            process.stdin.resume();
-            process.stdin.setEncoding('utf8');
-            process.stdin.on('data', (key: string) => {
-                if (key === 'q' || key === '\x03') {
-                    this.cleanup();
-                    process.exit(0);
-                }
-                if (key === 'r') this.render();
-            });
-        }
+            // Keyboard
+            if (process.stdin.isTTY) {
+                process.stdin.setRawMode(true);
+                process.stdin.resume();
+                process.stdin.setEncoding('utf8');
+                process.stdin.on('data', (key: string) => {
+                    if (key === 'q') {
+                        this.cleanup();
+                        process.exit(0);
+                    } else if (key === '\x03') { // Ctrl+C
+                        this.cleanup();
+                        process.exit(0);
+                    } else if (key === 'b') {
+                        this.cleanup();
+                        resolve('back');
+                    } else if (key === 'r') {
+                        this.render();
+                    }
+                });
+            }
 
-        process.stdout.write(cursor.hide);
-        this.render();
+            process.stdout.write(cursor.hide);
+            this.render();
+        }); // end Promise
     }
 
     private connectWithRetry(hubUrl: string): void {
@@ -213,7 +222,7 @@ export class DashboardScreen {
         out += `${bc}├${'─'.repeat(inner)}┤${c.reset}\n`;
 
         // ═══ Footer ═══
-        out += `${bc}│${c.reset}  ${c.dim}[r]${c.reset} refresh   ${c.dim}[q]${c.reset} quit${padRight('', Math.max(0, inner - 24))}${bc}│${c.reset}\n`;
+        out += `${bc}│${c.reset}  ${c.dim}[r]${c.reset} refresh   ${c.dim}[b]${c.reset} back to menu   ${c.dim}[q]${c.reset} quit${padRight('', Math.max(0, inner - 38))}${bc}│${c.reset}\n`;
         out += `${bc}╰${'─'.repeat(inner)}╯${c.reset}\n`;
 
         process.stdout.write(out);
