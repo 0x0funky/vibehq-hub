@@ -39,9 +39,7 @@ export class RelayEngine {
         const target = this.registry.getAgentByName(msg.toAgent);
         if (!target) {
             sourceWs.send(JSON.stringify({
-                type: 'relay:response',
-                requestId: msg.requestId,
-                fromAgent: msg.toAgent,
+                type: 'relay:response', requestId: msg.requestId, fromAgent: msg.toAgent,
                 answer: `Error: Agent "${msg.toAgent}" is not connected.`,
             } satisfies RelayResponseMessage));
             return;
@@ -55,9 +53,13 @@ export class RelayEngine {
             type: 'relay:start', fromAgent: msg.fromAgent, toAgent: msg.toAgent, requestId: msg.requestId,
         } satisfies RelayStartMessage);
 
-        target.ws.send(JSON.stringify({
+        const questionPayload = {
             type: 'relay:question', requestId: msg.requestId, fromAgent: msg.fromAgent, question: msg.question,
-        } satisfies RelayQuestionMessage));
+        } satisfies RelayQuestionMessage;
+
+        target.ws.send(JSON.stringify(questionPayload));
+        // Also forward to spawners shadowing this agent
+        this.sendToSpawners(msg.toAgent, questionPayload);
 
         this.log(`Ask: ${msg.fromAgent} → ${msg.toAgent} [${msg.requestId}]`);
     }
@@ -98,10 +100,13 @@ export class RelayEngine {
             type: 'relay:start', fromAgent: msg.fromAgent, toAgent: msg.toAgent, requestId: msg.requestId,
         } satisfies RelayStartMessage);
 
-        target.ws.send(JSON.stringify({
+        const taskPayload = {
             type: 'relay:task', requestId: msg.requestId, fromAgent: msg.fromAgent,
             task: msg.task, priority: msg.priority ?? 'medium',
-        } satisfies RelayTaskMessage));
+        } satisfies RelayTaskMessage;
+
+        target.ws.send(JSON.stringify(taskPayload));
+        this.sendToSpawners(msg.toAgent, taskPayload);
 
         this.registry.broadcastToAll({
             type: 'relay:done', fromAgent: msg.fromAgent, toAgent: msg.toAgent, requestId: msg.requestId,
@@ -120,13 +125,28 @@ export class RelayEngine {
             return;
         }
 
-        target.ws.send(JSON.stringify({
+        const replyPayload = {
             type: 'relay:reply:delivered',
             fromAgent: fromAgentName,
             message: msg.message,
-        } satisfies RelayReplyDeliveredMessage));
+        } satisfies RelayReplyDeliveredMessage;
+
+        target.ws.send(JSON.stringify(replyPayload));
+        // Also forward to spawners shadowing the target agent
+        this.sendToSpawners(msg.toAgent, replyPayload);
 
         this.log(`Reply: ${fromAgentName} → ${msg.toAgent}`);
+    }
+
+    /**
+     * Forward a message to all spawners subscribed to an agent name.
+     */
+    private sendToSpawners(agentName: string, payload: any): void {
+        const spawners = this.registry.getSpawnersForAgent(agentName);
+        const data = JSON.stringify(payload);
+        for (const ws of spawners) {
+            ws.send(data);
+        }
     }
 
     private log(message: string): void {

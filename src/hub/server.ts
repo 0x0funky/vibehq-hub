@@ -72,6 +72,15 @@ export function startHub(options: HubOptions): WebSocketServer {
                     registry.registerViewer(ws);
                     break;
 
+                case 'spawner:subscribe':
+                    const teammates = registry.subscribeSpawner(ws, (msg as any).name);
+                    ws.send(JSON.stringify({
+                        type: 'spawner:subscribed',
+                        name: (msg as any).name,
+                        teammates,
+                    }));
+                    break;
+
                 default:
                     if (verbose) {
                         console.log(`[Hub] Unknown message type: ${(msg as any).type}`);

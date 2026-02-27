@@ -18,6 +18,8 @@ import type {
 export class AgentRegistry {
     private agents: Map<WebSocket, ConnectedAgent> = new Map();
     private viewers: Set<WebSocket> = new Set();
+    /** Spawner connections subscribed to an agent name */
+    private spawners: Map<WebSocket, string> = new Map();
     private verbose: boolean;
 
     constructor(verbose = false) {
@@ -93,7 +95,36 @@ export class AgentRegistry {
             this.log(`Agent disconnected: ${agent.name}`);
         }
 
+        // Also clean up spawner subscriptions
+        if (this.spawners.has(ws)) {
+            const name = this.spawners.get(ws);
+            this.spawners.delete(ws);
+            this.log(`Spawner disconnected for agent: ${name}`);
+        }
+
         this.viewers.delete(ws);
+    }
+
+    /**
+     * Subscribe a spawner to shadow an agent name.
+     */
+    subscribeSpawner(ws: WebSocket, agentName: string): Agent[] {
+        this.spawners.set(ws, agentName);
+        this.log(`Spawner subscribed to agent: ${agentName}`);
+        return this.getAllAgents();
+    }
+
+    /**
+     * Get all spawner WebSocket connections for a given agent name.
+     */
+    getSpawnersForAgent(agentName: string): WebSocket[] {
+        const result: WebSocket[] = [];
+        for (const [ws, name] of this.spawners.entries()) {
+            if (name.toLowerCase() === agentName.toLowerCase() && ws.readyState === WebSocket.OPEN) {
+                result.push(ws);
+            }
+        }
+        return result;
     }
 
     /**

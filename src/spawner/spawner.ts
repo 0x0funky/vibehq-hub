@@ -7,13 +7,12 @@ import * as pty from 'node-pty';
 import { execSync } from 'child_process';
 import WebSocket from 'ws';
 import type {
-    AgentRegisterMessage,
-    AgentRegisteredMessage,
     AgentStatusBroadcastMessage,
     AgentDisconnectedMessage,
     RelayQuestionMessage,
     RelayTaskMessage,
     RelayReplyDeliveredMessage,
+    SpawnerSubscribedMessage,
     Agent,
 } from '../shared/types.js';
 
@@ -102,11 +101,11 @@ export class AgentSpawner {
             this.ws = new WebSocket(this.options.hubUrl);
 
             this.ws.on('open', () => {
+                // Subscribe as spawner — don't register as a new agent
                 this.ws!.send(JSON.stringify({
-                    type: 'agent:register',
+                    type: 'spawner:subscribe',
                     name: this.options.name,
-                    role: this.options.role,
-                } satisfies AgentRegisterMessage));
+                }));
             });
 
             this.ws.on('message', (raw) => {
@@ -114,8 +113,8 @@ export class AgentSpawner {
                 try { msg = JSON.parse(raw.toString()); } catch { return; }
 
                 switch (msg.type) {
-                    case 'agent:registered':
-                        this.handleRegistered(msg);
+                    case 'spawner:subscribed':
+                        this.handleSubscribed(msg);
                         resolve();
                         break;
                     case 'agent:status:broadcast':
@@ -202,8 +201,8 @@ export class AgentSpawner {
 
     // --- Hub handlers ---
 
-    private handleRegistered(msg: AgentRegisteredMessage): void {
-        this.agentId = msg.agentId;
+    private handleSubscribed(msg: SpawnerSubscribedMessage): void {
+        this.agentId = msg.name;
         this.teammates.clear();
         for (const agent of msg.teammates) {
             this.teammates.set(agent.id, agent);

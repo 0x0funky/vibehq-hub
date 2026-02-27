@@ -24,6 +24,10 @@ export const MessageTypes = {
     RELAY_ASSIGN: 'relay:assign',
     RELAY_TASK: 'relay:task',
 
+    // Spawner
+    SPAWNER_SUBSCRIBE: 'spawner:subscribe',
+    SPAWNER_SUBSCRIBED: 'spawner:subscribed',
+
     // Relay: events (VibeHQ integration)
     RELAY_START: 'relay:start',
     RELAY_DONE: 'relay:done',

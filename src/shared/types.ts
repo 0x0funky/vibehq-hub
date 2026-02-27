@@ -136,6 +136,19 @@ export interface ViewerConnectMessage {
     type: 'viewer:connect';
 }
 
+// --- WS Messages: Spawner ---
+
+export interface SpawnerSubscribeMessage {
+    type: 'spawner:subscribe';
+    name: string;
+}
+
+export interface SpawnerSubscribedMessage {
+    type: 'spawner:subscribed';
+    name: string;
+    teammates: Agent[];
+}
+
 // --- Union type for all messages ---
 
 export type HubMessage =
@@ -154,4 +167,6 @@ export type HubMessage =
     | RelayReplyDeliveredMessage
     | RelayStartMessage
     | RelayDoneMessage
-    | ViewerConnectMessage;
+    | ViewerConnectMessage
+    | SpawnerSubscribeMessage
+    | SpawnerSubscribedMessage;
