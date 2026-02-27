@@ -1,10 +1,8 @@
-// ============================================================
-// Agent Spawner — wraps a CLI process (PTY) + Hub connection
-// No stdout parsing. Inject-only via stdin.
-// ============================================================
-
 import * as pty from 'node-pty';
 import { execSync } from 'child_process';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import WebSocket from 'ws';
 import type {
     AgentStatusBroadcastMessage,
@@ -50,8 +48,64 @@ export class AgentSpawner {
     }
 
     async start(): Promise<void> {
+        this.autoConfigureMcp();
         this.spawnCli();
         await this.connectToHub();
+    }
+
+    /**
+     * Auto-configure MCP for the CLI being spawned.
+     * Detects CLI type and writes config with matching name/role/hub.
+     */
+    private autoConfigureMcp(): void {
+        const { name, role, hubUrl, command } = this.options;
+        const cmd = command.toLowerCase();
+
+        if (cmd === 'claude' || cmd.includes('claude')) {
+            this.configureClaudeMcp(name, role, hubUrl);
+        } else if (cmd === 'codex' || cmd.includes('codex')) {
+            this.configureCodexMcp(name, role, hubUrl);
+        }
+    }
+
+    /**
+     * Write .mcp.json for Claude Code in CWD.
+     */
+    private configureClaudeMcp(name: string, role: string, hubUrl: string): void {
+        const mcpPath = join(process.cwd(), '.mcp.json');
+        let config: any = {};
+
+        if (existsSync(mcpPath)) {
+            try { config = JSON.parse(readFileSync(mcpPath, 'utf-8')); } catch { config = {}; }
+        }
+
+        if (!config.mcpServers) config.mcpServers = {};
+        config.mcpServers.team = {
+            command: 'vibehq-agent',
+            args: ['--name', name, '--role', role, '--hub', hubUrl],
+        };
+
+        writeFileSync(mcpPath, JSON.stringify(config, null, 2) + '\n');
+    }
+
+    /**
+     * Update ~/.codex/config.toml for Codex CLI.
+     */
+    private configureCodexMcp(name: string, role: string, hubUrl: string): void {
+        const configPath = join(homedir(), '.codex', 'config.toml');
+        if (!existsSync(configPath)) return;
+
+        let content = readFileSync(configPath, 'utf-8');
+
+        // Remove existing [mcp_servers.team] block if present
+        content = content.replace(/\[mcp_servers\.team\]\s*\n(?:(?!\[).*\n)*/g, '');
+        content = content.trimEnd();
+
+        // Append new team config
+        const teamBlock = `\n\n[mcp_servers.team]\ncommand = "vibehq-agent"\nargs = ["--name", "${name}", "--role", "${role}", "--hub", "${hubUrl}"]\n`;
+        content += teamBlock;
+
+        writeFileSync(configPath, content);
     }
 
     private spawnCli(): void {
