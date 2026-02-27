@@ -69,23 +69,49 @@ export class AgentSpawner {
     }
 
     /**
-     * Write .mcp.json for Claude Code in CWD.
+     * Update ~/.claude.json project-scoped MCP config for Claude Code.
+     * Claude Code stores MCP config at: projects["<cwd>"].mcpServers
      */
     private configureClaudeMcp(name: string, role: string, hubUrl: string): void {
-        const mcpPath = join(process.cwd(), '.mcp.json');
-        let config: any = {};
+        const claudeJsonPath = join(homedir(), '.claude.json');
+        if (!existsSync(claudeJsonPath)) return;
 
-        if (existsSync(mcpPath)) {
-            try { config = JSON.parse(readFileSync(mcpPath, 'utf-8')); } catch { config = {}; }
-        }
+        let config: any;
+        try { config = JSON.parse(readFileSync(claudeJsonPath, 'utf-8')); } catch { return; }
+        if (!config.projects) config.projects = {};
 
-        if (!config.mcpServers) config.mcpServers = {};
-        config.mcpServers.team = {
+        // Claude Code uses forward-slash path keys on Windows
+        const cwd = process.cwd();
+        const cwdForward = cwd.replace(/\\/g, '/');
+
+        const teamServer = {
+            type: 'stdio',
             command: 'vibehq-agent',
             args: ['--name', name, '--role', role, '--hub', hubUrl],
+            env: {},
         };
 
-        writeFileSync(mcpPath, JSON.stringify(config, null, 2) + '\n');
+        // Update all matching project keys (both / and \ variants)
+        let found = false;
+        for (const key of Object.keys(config.projects)) {
+            const normalizedKey = key.replace(/\\/g, '/').toLowerCase();
+            if (normalizedKey === cwdForward.toLowerCase()) {
+                if (!config.projects[key].mcpServers) config.projects[key].mcpServers = {};
+                config.projects[key].mcpServers.team = teamServer;
+                found = true;
+            }
+        }
+
+        // If no matching project, create one with forward-slash path
+        if (!found) {
+            config.projects[cwdForward] = {
+                allowedTools: [],
+                mcpServers: { team: teamServer },
+                hasTrustDialogAccepted: true,
+            };
+        }
+
+        writeFileSync(claudeJsonPath, JSON.stringify(config, null, 2));
     }
 
     /**
