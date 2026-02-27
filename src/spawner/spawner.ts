@@ -153,6 +153,17 @@ export class AgentSpawner {
     }
 
     /**
+     * Write text to PTY, then press Enter after a delay.
+     */
+    private writeToPty(text: string): void {
+        this.ptyProcess?.write(text);
+        // Delay before pressing Enter — let the TUI process the text first
+        setTimeout(() => {
+            this.ptyProcess?.write('\r');
+        }, 200);
+    }
+
+    /**
      * Inject a teammate question into the CLI's PTY.
      */
     private async handleQuestion(msg: RelayQuestionMessage): Promise<void> {
@@ -160,9 +171,9 @@ export class AgentSpawner {
 
         const responsePromise = this.parser.expectResponse(msg.requestId);
 
-        // Inject question as a single line to avoid multiline PTY issues
+        // Inject question as a single line
         const prompt = `[Team question from ${msg.fromAgent}]: ${msg.question} — Reply between [TEAM_RESPONSE_START] and [TEAM_RESPONSE_END] markers.`;
-        this.ptyProcess?.write(prompt + '\r');
+        this.writeToPty(prompt);
 
         try {
             const response = await responsePromise;
@@ -187,7 +198,7 @@ export class AgentSpawner {
      */
     private handleTask(msg: RelayTaskMessage): void {
         const prompt = `[Task from ${msg.fromAgent}, priority: ${msg.priority}]: ${msg.task}`;
-        this.ptyProcess?.write(prompt + '\r');
+        this.writeToPty(prompt);
     }
 
     // --- Hub handlers (no logs) ---
