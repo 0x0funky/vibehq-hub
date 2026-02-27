@@ -279,12 +279,13 @@ export class HubClient extends EventEmitter {
         const existing = this.teammates.get(msg.agentId);
         if (existing) {
             existing.status = msg.status;
+            if (msg.role) existing.role = msg.role;
         } else if (msg.agentId !== this.agentId) {
             // New agent joined
             this.teammates.set(msg.agentId, {
                 id: msg.agentId,
                 name: msg.name,
-                role: '',
+                role: msg.role || '',
                 capabilities: [],
                 status: msg.status,
             });

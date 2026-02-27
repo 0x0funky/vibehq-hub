@@ -43,6 +43,7 @@ export interface AgentStatusBroadcastMessage {
     type: 'agent:status:broadcast';
     agentId: string;
     name: string;
+    role: string;
     status: AgentStatus;
 }
 

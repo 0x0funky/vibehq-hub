@@ -58,6 +58,7 @@ export class AgentRegistry {
             type: 'agent:status:broadcast',
             agentId: agent.id,
             name: agent.name,
+            role: agent.role,
             status: agent.status,
         } satisfies AgentStatusBroadcastMessage, ws);
 
@@ -78,6 +79,7 @@ export class AgentRegistry {
                 type: 'agent:status:broadcast',
                 agentId: agent.id,
                 name: agent.name,
+                role: agent.role,
                 status: agent.status,
             } satisfies AgentStatusBroadcastMessage));
         }
@@ -142,6 +144,7 @@ export class AgentRegistry {
             type: 'agent:status:broadcast',
             agentId: agent.id,
             name: agent.name,
+            role: agent.role,
             status: agent.status,
         } satisfies AgentStatusBroadcastMessage, ws);
 
