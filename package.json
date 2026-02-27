@@ -6,6 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
+    "vibehq": "./dist/bin/start.js",
     "vibehq-hub": "./dist/bin/hub.js",
     "vibehq-agent": "./dist/bin/agent.js",
     "vibehq-spawn": "./dist/bin/spawn.js"
