@@ -1,53 +1,64 @@
 # vibehq-hub
 
 > **Universal Multi-Agent Communication via MCP**  
-> Let any AI CLI agent (Claude Code, Gemini CLI, Codex CLI, Cursor) talk to each other.
+> Let any AI CLI agent (Claude Code, Gemini CLI, Codex CLI) talk to each other — with team isolation, shared files, and a team bulletin board.
 
 ---
 
 ## ✨ What is this?
 
-`agent-hub` is a standalone npm package with two components:
+`agent-hub` is a standalone npm package with three components:
 
-1. **Hub Server** — A central WebSocket server that manages agent registry and message relay  
-2. **MCP Agent** — A per-CLI MCP server (stdio) that gives each AI agent collaboration tools
+1. **Hub Server** — Central WebSocket server (agent registry, message relay, team updates)  
+2. **MCP Agent** — Per-CLI MCP server (stdio) that gives each AI agent collaboration tools  
+3. **Spawner** — Wraps any CLI process with Hub connectivity and auto-configures MCP
 
-When configured, your AI agents gain these superpowers:
+When configured, your AI agents gain these tools:
 
 | Tool | Description |
 |------|-------------|
 | `list_teammates` | See who's online and their current status |
-| `ask_teammate` | Ask a teammate a question and wait for their response |
-| `assign_task` | Assign a task to a teammate (non-blocking) |
+| `ask_teammate` | Ask a teammate a question (async) |
+| `assign_task` | Assign a task to a teammate |
+| `reply_to_team` | Send an async reply to a teammate |
 | `check_status` | Check the current status of any teammate |
+| `share_file` | Share a file with your team |
+| `read_shared_file` | Read a file shared by a teammate |
+| `list_shared_files` | List all files in the team shared folder |
+| `post_update` | Post a progress update to the team bulletin board |
+| `get_team_updates` | Get recent progress updates from the team |
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                  Hub Server (WS :3001)                       │
-│                                                             │
-│  Agent Registry     Relay Engine      Event Bus             │
-└───────┬─────────────────┬─────────────────┬─────────────────┘
-        │ WS               │ WS               │ WS
-   ┌────┴────┐       ┌────┴────┐       ┌────┴────┐
-   │ MCP #1  │       │ MCP #2  │       │ MCP #3  │
-   │ (Alex)  │       │(Jordan) │       │ (Riley) │
-   └────┬────┘       └────┬────┘       └────┬────┘
-        │ stdio           │ stdio           │ stdio
-   ┌────┴────┐       ┌────┴────┐       ┌────┴────┐
-   │ Claude  │       │ Gemini  │       │ Codex   │
-   │ Code    │       │ CLI     │       │ CLI     │
-   └─────────┘       └─────────┘       └─────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                   Hub Server (WS :3001)                       │
+│                                                              │
+│  Agent Registry     Relay Engine     Team Updates Store       │
+│  (team-scoped)      (team-scoped)   (in-memory, per team)    │
+└───────┬──────────────────┬──────────────────┬────────────────┘
+        │ WS                │ WS                │ WS
+   ┌────┴────┐        ┌────┴────┐        ┌────┴────┐
+   │ MCP #1  │        │ MCP #2  │        │ MCP #3  │
+   │ (Alex)  │        │(Jordan) │        │  (Bob)  │
+   │ team:   │        │ team:   │        │ team:   │
+   │ dexless │        │ dexless │        │  other  │
+   └────┬────┘        └────┬────┘        └────┬────┘
+        │ stdio             │ stdio             │ stdio
+   ┌────┴────┐        ┌────┴────┐        ┌────┴────┐
+   │ Claude  │        │  Codex  │        │ Gemini  │
+   │  Code   │        │   CLI   │        │   CLI   │
+   └─────────┘        └─────────┘        └─────────┘
+   
+Shared Files: ~/.vibehq/teams/<team>/shared/
 ```
 
-**Key Principle:**
-- **Hub Server** = Central controller (agent registry, message relay, state tracking)
-- **MCP Agent** = Per-CLI communication module (exposes tools, connects to Hub)
-- Hub ↔ MCP Agent: **WebSocket**
-- MCP Agent ↔ CLI: **stdio (MCP protocol)**
+**Key Principles:**
+- **Team Isolation** — Agents only see/communicate with teammates in the same team
+- **Shared Files** — `~/.vibehq/teams/<team>/shared/` per team for document exchange
+- **Auto-Config** — Spawner auto-writes MCP config for Claude/Codex/Gemini
 
 ---
 
@@ -65,9 +76,26 @@ npm install -g @vibehq/agent-hub
 vibehq-hub --port 3001 --verbose
 ```
 
-### 3. Configure Your AI CLI
+### 3. Spawn Agents (Recommended)
 
-Add to your project's `.mcp.json`:
+The easiest way — `vibehq-spawn` auto-configures MCP for each CLI:
+
+```bash
+# Terminal 1: Backend engineer (Claude Code)
+vibehq-spawn --name Alex --role "Backend Engineer" --team dexless -- claude
+
+# Terminal 2: Frontend engineer (Codex CLI)
+vibehq-spawn --name Jordan --role "Frontend Engineer" --team dexless -- codex
+
+# Terminal 3: AI engineer (Gemini CLI)
+vibehq-spawn --name Bob --role "AI Engineer" --team dexless -- gemini
+```
+
+That's it! Each agent now has 10 team collaboration tools. Try asking one to `list_teammates`.
+
+### Alternative: Manual MCP Config
+
+If you prefer manual setup, add to your project's `.mcp.json`:
 
 ```json
 {
@@ -77,16 +105,35 @@ Add to your project's `.mcp.json`:
       "args": [
         "--name", "Jordan",
         "--role", "Frontend Engineer",
-        "--hub", "ws://localhost:3001"
+        "--hub", "ws://localhost:3001",
+        "--team", "dexless"
       ]
     }
   }
 }
 ```
 
-### 4. Done!
+---
 
-Your AI agent now has team collaboration tools. Ask it to `list_teammates` or `ask_teammate` and watch the magic happen.
+## 👥 Team Workflow
+
+### Best Practice: Shared Specs + Updates
+
+The most token-efficient way for agents to collaborate:
+
+```
+1. PM: share_file("task-spec.md", "...")     → Everyone can read it
+2. Backend: reads spec → works → share_file("api-spec.md", "...")
+3. Backend: post_update("API spec done, see api-spec.md")
+4. Frontend: get_team_updates → sees the announcement
+5. Frontend: read_shared_file("api-spec.md") → starts building
+6. Only ask_teammate when spec is unclear
+```
+
+**Why?**
+- `share_file` = write once, read many (~500 tokens each)
+- `ask_teammate` round-trip = ~5000-7000 tokens
+- Shared files persist across agent restarts
 
 ---
 
@@ -103,35 +150,36 @@ Options:
   -h, --help             Show help
 ```
 
-### `vibehq-agent`
+### `vibehq-spawn`
 
-Start an MCP agent (auto-spawned by CLI via `.mcp.json`).
+Spawn a CLI agent with auto-MCP configuration.
 
 ```
 Options:
   -n, --name <string>     Agent name (required)
   -r, --role <string>     Agent role (default: "Engineer")
   -u, --hub <url>         Hub WebSocket URL (default: ws://localhost:3001)
-  -t, --timeout <ms>      Ask timeout in ms (default: 120000)
+      --team <string>     Team name (default: "default")
   -h, --help              Show help
+
+Examples:
+  vibehq-spawn --name Claude --role "Backend Engineer" --team myteam -- claude
+  vibehq-spawn --name Codex --role "Frontend Engineer" --team myteam -- codex
+  vibehq-spawn --name Gemini --role "AI Engineer" --team myteam -- gemini
 ```
 
----
+### `vibehq-agent`
 
-## 🔌 Programmatic Usage
+Start an MCP agent (auto-spawned by CLI via MCP config).
 
-```typescript
-import { startHub, HubClient } from '@vibehq/agent-hub';
-
-// Start a hub programmatically
-const wss = startHub({ port: 3001, verbose: true });
-
-// Or use the client directly
-const client = new HubClient('ws://localhost:3001', 'MyBot', 'Engineer');
-await client.connect();
-
-const teammates = client.getTeammates();
-const response = await client.ask('Jordan', 'What framework are we using?');
+```
+Options:
+  -n, --name <string>     Agent name (required)
+  -r, --role <string>     Agent role (default: "Engineer")
+  -u, --hub <url>         Hub WebSocket URL (default: ws://localhost:3001)
+      --team <string>     Team name (default: "default")
+  -t, --timeout <ms>      Ask timeout in ms (default: 120000)
+  -h, --help              Show help
 ```
 
 ---
@@ -154,32 +202,6 @@ ws.on('message', (data) => {
 });
 ```
 
-| Hub Event | VibeHQ Action |
-|-----------|---------------|
-| `agent:status:broadcast` | Update agent dot color |
-| `relay:start` | Start walking animation |
-| `relay:done` | End walking animation |
-| `agent:registered` | Add agent to canvas |
-| `agent:disconnected` | Grey out agent |
-
----
-
-## 🛠️ Development
-
-```bash
-# Install dependencies
-npm install
-
-# Build
-npm run build
-
-# Dev mode (watch)
-npm run dev
-
-# Run integration tests
-npx tsx tests/integration.ts
-```
-
 ---
 
 ## 📁 Project Structure
@@ -188,27 +210,31 @@ npx tsx tests/integration.ts
 agent-hub/
 ├── bin/
 │   ├── hub.ts              # CLI: vibehq-hub
-│   └── agent.ts            # CLI: vibehq-agent
+│   ├── agent.ts            # CLI: vibehq-agent
+│   └── spawn.ts            # CLI: vibehq-spawn
 ├── src/
 │   ├── index.ts            # Public API
 │   ├── hub/
-│   │   ├── server.ts       # WebSocket Hub server
-│   │   ├── registry.ts     # Agent registration & state
+│   │   ├── server.ts       # WebSocket Hub + team updates store
+│   │   ├── registry.ts     # Agent registration (team-scoped)
 │   │   ├── relay.ts        # Message relay engine
 │   │   └── types.ts        # Hub-specific types
 │   ├── mcp/
-│   │   ├── server.ts       # MCP server (stdio transport)
+│   │   ├── server.ts       # MCP server (10 tools)
 │   │   ├── hub-client.ts   # WS client to Hub
 │   │   └── tools/
 │   │       ├── list-teammates.ts
 │   │       ├── ask-teammate.ts
 │   │       ├── assign-task.ts
-│   │       └── check-status.ts
+│   │       ├── check-status.ts
+│   │       ├── reply-to-team.ts
+│   │       ├── share-file.ts      # share/read/list shared files
+│   │       └── team-updates.ts    # post/get team updates
+│   ├── spawner/
+│   │   └── spawner.ts      # PTY wrapper + auto MCP config
 │   └── shared/
 │       ├── types.ts        # Shared interfaces
 │       └── protocol.ts     # Message type constants
-├── examples/
-│   └── .mcp.json.example
 └── tests/
     └── integration.ts
 ```
@@ -223,7 +249,19 @@ agent-hub/
 | Runtime | Node.js 18+ |
 | MCP SDK | `@modelcontextprotocol/sdk` |
 | WebSocket | `ws` |
+| PTY | `node-pty` |
 | Build | `tsup` |
+
+---
+
+## 🛠️ Development
+
+```bash
+npm install       # Install dependencies
+npm run build     # Build
+npm run dev       # Dev mode (watch)
+npm link          # Link globally for CLI access
+```
 
 ---
 
