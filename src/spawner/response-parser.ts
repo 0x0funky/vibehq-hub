@@ -1,9 +1,22 @@
 // ============================================================
 // Response Parser — extracts CLI responses from stdout stream
+// Strips ANSI escape codes before matching markers.
 // ============================================================
 
 const RESPONSE_START = '[TEAM_RESPONSE_START]';
 const RESPONSE_END = '[TEAM_RESPONSE_END]';
+
+/**
+ * Strip ALL ANSI escape sequences (from VibeHQ output-parser.ts pattern)
+ */
+function stripAnsi(str: string): string {
+    return str
+        .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')   // CSI sequences
+        .replace(/\x1b\][^\x07]*\x07/g, '')         // OSC sequences
+        .replace(/\x1b[()][A-Z0-9]/g, '')           // Character set selection
+        .replace(/\x1b[^\[(\]]/g, '')                // Other ESC sequences
+        .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, ''); // Control chars (except \n)
+}
 
 export interface PendingResponse {
     requestId: string;
@@ -15,7 +28,7 @@ export interface PendingResponse {
 export class ResponseParser {
     private buffer = '';
     private capturing = false;
-    private capturedContent = '';
+    private capturedLines: string[] = [];
     private pendingResponses: Map<string, PendingResponse> = new Map();
     private currentRequestId: string | null = null;
     private timeout: number;
@@ -33,7 +46,7 @@ export class ResponseParser {
                 this.pendingResponses.delete(requestId);
                 if (this.currentRequestId === requestId) {
                     this.capturing = false;
-                    this.capturedContent = '';
+                    this.capturedLines = [];
                     this.currentRequestId = null;
                 }
                 reject(new Error(`Timeout waiting for CLI response (${this.timeout / 1000}s)`));
@@ -41,7 +54,6 @@ export class ResponseParser {
 
             this.pendingResponses.set(requestId, { requestId, resolve, reject, timer });
 
-            // Set the current request we're waiting for
             if (!this.currentRequestId) {
                 this.currentRequestId = requestId;
             }
@@ -49,64 +61,72 @@ export class ResponseParser {
     }
 
     /**
-     * Feed stdout data into the parser.
+     * Feed raw PTY/stdout data into the parser.
+     * Strips ANSI for marker detection, passes raw data through to user.
      */
     feed(data: string): string {
-        // Track what should be shown to user vs captured
-        let userOutput = '';
-        this.buffer += data;
+        // Always pass raw data through to the user's terminal
+        // But strip ANSI for our marker detection logic
+        const cleanData = stripAnsi(data);
+        this.buffer += cleanData;
 
+        // Process line by line for marker detection
+        this.processBuffer();
+
+        // If we're currently capturing a response, suppress the raw output
+        // so the markers and response content don't clutter the user's terminal
+        if (this.capturing) {
+            return '';
+        }
+
+        // Check if the raw data contains our markers (with possible ANSI in between)
+        if (cleanData.includes(RESPONSE_START) || cleanData.includes(RESPONSE_END)) {
+            return ''; // Suppress marker lines from user view
+        }
+
+        return data;
+    }
+
+    /**
+     * Process the clean-text buffer looking for markers.
+     */
+    private processBuffer(): void {
         while (this.buffer.length > 0) {
             if (this.capturing) {
                 const endIdx = this.buffer.indexOf(RESPONSE_END);
                 if (endIdx !== -1) {
-                    // End marker found — capture content and resolve
-                    this.capturedContent += this.buffer.substring(0, endIdx);
+                    // End marker found — capture everything before it
+                    const content = this.buffer.substring(0, endIdx);
+                    if (content.trim()) {
+                        this.capturedLines.push(content);
+                    }
                     this.buffer = this.buffer.substring(endIdx + RESPONSE_END.length);
 
-                    // Remove trailing newline if present
-                    const trimmedLine = this.buffer.startsWith('\n') ? this.buffer.substring(1) : this.buffer;
-                    this.buffer = trimmedLine;
-
+                    // Resolve the response
                     this.resolveCurrentResponse();
                     this.capturing = false;
                 } else {
-                    // Still capturing, buffer everything
-                    this.capturedContent += this.buffer;
-                    this.buffer = '';
+                    // Still waiting for end marker, keep buffering
+                    // But don't let buffer grow unbounded — check periodically
+                    break;
                 }
             } else {
                 const startIdx = this.buffer.indexOf(RESPONSE_START);
                 if (startIdx !== -1) {
-                    // Start marker found — show everything before it to user
-                    userOutput += this.buffer.substring(0, startIdx);
+                    // Start marker found — begin capturing
                     this.buffer = this.buffer.substring(startIdx + RESPONSE_START.length);
-
-                    // Skip leading newline after start marker
-                    if (this.buffer.startsWith('\n')) {
-                        this.buffer = this.buffer.substring(1);
-                    }
-
                     this.capturing = true;
-                    this.capturedContent = '';
+                    this.capturedLines = [];
                 } else {
-                    // No markers — pass through to user
-                    // But keep last chunk in buffer in case a partial marker is split across chunks
-                    const safeLength = this.buffer.length - RESPONSE_START.length;
-                    if (safeLength > 0) {
-                        userOutput += this.buffer.substring(0, safeLength);
-                        this.buffer = this.buffer.substring(safeLength);
-                    } else {
-                        // Buffer too small, just flush
-                        userOutput += this.buffer;
-                        this.buffer = '';
+                    // No start marker — clear buffer but keep last chunk for partial matching
+                    const keepLength = RESPONSE_START.length + 10;
+                    if (this.buffer.length > keepLength) {
+                        this.buffer = this.buffer.substring(this.buffer.length - keepLength);
                     }
                     break;
                 }
             }
         }
-
-        return userOutput;
     }
 
     /**
@@ -119,10 +139,17 @@ export class ResponseParser {
         if (pending) {
             clearTimeout(pending.timer);
             this.pendingResponses.delete(this.currentRequestId);
-            pending.resolve(this.capturedContent.trim());
+
+            // Join and clean the captured content
+            const fullResponse = this.capturedLines
+                .join('')
+                .replace(/\(your response here\)/g, '') // Remove placeholder if echoed
+                .trim();
+
+            pending.resolve(fullResponse);
         }
 
-        this.capturedContent = '';
+        this.capturedLines = [];
         this.currentRequestId = null;
 
         // Activate next pending request if any
