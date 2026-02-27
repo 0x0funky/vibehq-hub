@@ -1,0 +1,602 @@
+# @vibehq/agent-hub — Technical Specification
+
+> **Universal Multi-Agent Communication via MCP**
+> Let any AI CLI agent (Claude Code, Gemini CLI, Codex CLI, Cursor) talk to each other.
+
+---
+
+## Overview
+
+`agent-hub` is a standalone, open-source npm package consisting of two components:
+
+1. **Hub Server** — A central WebSocket server that manages agent registry and message relay
+2. **MCP Agent** — A per-CLI MCP server (stdio transport) that gives each AI agent `ask_teammate`, `assign_task`, and other collaboration tools
+
+```
+npm install -g @vibehq/agent-hub
+```
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  Hub Server (WS :3001)                       │
+│                                                             │
+│  Agent Registry     Relay Engine      Event Bus             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │ name: Jordan  │  │ route msg    │  │ broadcast    │      │
+│  │ status: idle  │  │ from → to    │  │ status/relay │      │
+│  │ wsConn: ws#2  │  │ inject stdin │  │ events       │      │
+│  │ ...           │  │ capture resp │  │              │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+└───────┬─────────────────┬─────────────────┬─────────────────┘
+        │ WS               │ WS               │ WS
+   ┌────┴────┐       ┌────┴────┐       ┌────┴────┐
+   │ MCP #1  │       │ MCP #2  │       │ MCP #3  │
+   │ (Alex)  │       │(Jordan) │       │ (Riley) │
+   └────┬────┘       └────┬────┘       └────┬────┘
+        │ stdio           │ stdio           │ stdio
+   ┌────┴────┐       ┌────┴────┐       ┌────┴────┐
+   │ Claude  │       │ Gemini  │       │ Codex   │
+   │ Code    │       │ CLI     │       │ CLI     │
+   └─────────┘       └─────────┘       └─────────┘
+```
+
+### Key Principle
+
+- **Hub Server** = 中央控制器（管理 agent 註冊、轉發訊息、追蹤狀態）
+- **MCP Agent** = 每個 CLI 的「通訊模組」（暴露 tools，連接到 Hub）
+- Hub 跟 MCP Agent 之間用 **WebSocket** 通訊
+- MCP Agent 跟 CLI 之間用 **stdio（MCP protocol）** 通訊
+
+---
+
+## Project Structure
+
+```
+agent-hub/
+├── package.json
+├── tsconfig.json
+├── README.md
+├── bin/
+│   ├── hub.ts              # CLI entry: vibehq-hub
+│   └── agent.ts            # CLI entry: vibehq-agent
+├── src/
+│   ├── hub/
+│   │   ├── server.ts       # WebSocket Hub server
+│   │   ├── registry.ts     # Agent registration & state management
+│   │   ├── relay.ts        # Message relay engine
+│   │   └── types.ts        # Hub-specific types
+│   ├── mcp/
+│   │   ├── server.ts       # MCP server entry (stdio transport)
+│   │   ├── tools/
+│   │   │   ├── list-teammates.ts
+│   │   │   ├── ask-teammate.ts
+│   │   │   ├── assign-task.ts
+│   │   │   └── check-status.ts
+│   │   └── hub-client.ts   # WS client to connect to Hub
+│   └── shared/
+│       ├── types.ts         # Shared types (messages, agents)
+│       └── protocol.ts      # WS message protocol constants
+├── examples/
+│   ├── .mcp.json.example    # Example MCP config
+│   └── demo/                # Demo setup with 3 agents
+└── tests/
+    ├── hub.test.ts
+    └── relay.test.ts
+```
+
+---
+
+## Tech Stack
+
+| Layer | Tech |
+|-------|------|
+| Language | TypeScript (strict mode) |
+| Runtime | Node.js 18+ |
+| MCP SDK | `@modelcontextprotocol/sdk` (latest) |
+| WebSocket | `ws` package |
+| Build | `tsup` (bundle for npm) |
+| CLI | Node.js `bin` scripts |
+
+### package.json Key Fields
+
+```json
+{
+  "name": "@vibehq/agent-hub",
+  "version": "0.1.0",
+  "bin": {
+    "vibehq-hub": "./dist/bin/hub.js",
+    "vibehq-agent": "./dist/bin/agent.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist/"],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "ws": "^8.16.0"
+  }
+}
+```
+
+---
+
+## Component 1: Hub Server
+
+### 啟動方式
+
+```bash
+vibehq-hub --port 3001
+```
+
+### 功能
+
+1. **Agent Registry** — agents 連上來時註冊身份
+2. **Relay Engine** — 轉發 [ask](file:///D:/VibeHQ/src/lib/types.ts#21-31) 和 `assign` 訊息
+3. **Event Bus** — 廣播狀態變更給所有連接者（包括 VibeHQ 前端）
+4. **State Tracking** — 追蹤每個 agent 的 idle/working 狀態
+
+### WS Protocol（Hub ↔ MCP Agent）
+
+所有訊息是 JSON，有 `type` field：
+
+```typescript
+// ---- Agent Registration ----
+// MCP → Hub: 註冊身份
+{
+  type: "agent:register",
+  name: string,          // "Jordan"
+  role?: string,         // "Frontend Engineer"
+  capabilities?: string[] // ["frontend", "react", "typescript"]
+}
+
+// Hub → MCP: 註冊成功
+{
+  type: "agent:registered",
+  agentId: string,       // UUID assigned by hub
+  teammates: Agent[]     // list of other registered agents
+}
+
+// ---- Relay: Ask (synchronous) ----
+// MCP → Hub: 請求問某個 agent
+{
+  type: "relay:ask",
+  requestId: string,     // UUID for tracking
+  fromAgent: string,     // "Alex"
+  toAgent: string,       // "Jordan"
+  question: string       // "整理前端 code summary"
+}
+
+// Hub → Target MCP: 轉發問題
+{
+  type: "relay:question",
+  requestId: string,
+  fromAgent: string,
+  question: string
+}
+
+// Target MCP → Hub: 回覆
+{
+  type: "relay:answer",
+  requestId: string,
+  answer: string
+}
+
+// Hub → Source MCP: 轉發回覆
+{
+  type: "relay:response",
+  requestId: string,
+  fromAgent: string,
+  answer: string
+}
+
+// ---- Relay: Assign (async, fire-and-forget) ----
+// MCP → Hub
+{
+  type: "relay:assign",
+  requestId: string,
+  fromAgent: string,
+  toAgent: string,
+  task: string,
+  priority?: "low" | "medium" | "high"
+}
+
+// Hub → Target MCP
+{
+  type: "relay:task",
+  requestId: string,
+  fromAgent: string,
+  task: string,
+  priority: string
+}
+
+// ---- Status Updates ----
+// MCP → Hub: 狀態變更
+{
+  type: "agent:status",
+  status: "idle" | "working" | "busy"
+}
+
+// Hub → All: 廣播狀態
+{
+  type: "agent:status:broadcast",
+  agentId: string,
+  name: string,
+  status: string
+}
+
+// ---- Events (for VibeHQ integration) ----
+// Hub → All: Relay 開始（觸發走路動畫）
+{
+  type: "relay:start",
+  fromAgent: string,
+  toAgent: string,
+  requestId: string
+}
+
+// Hub → All: Relay 結束
+{
+  type: "relay:done",
+  fromAgent: string,
+  toAgent: string,
+  requestId: string
+}
+```
+
+### Hub Server Implementation Notes
+
+```typescript
+// src/hub/server.ts
+import { WebSocketServer, WebSocket } from 'ws';
+import { AgentRegistry } from './registry';
+import { RelayEngine } from './relay';
+
+export function startHub(port: number) {
+    const wss = new WebSocketServer({ port });
+    const registry = new AgentRegistry();
+    const relay = new RelayEngine(registry);
+
+    wss.on('connection', (ws: WebSocket) => {
+        ws.on('message', (raw) => {
+            const msg = JSON.parse(raw.toString());
+            switch (msg.type) {
+                case 'agent:register':
+                    registry.register(ws, msg);
+                    break;
+                case 'relay:ask':
+                    relay.handleAsk(ws, msg);
+                    break;
+                case 'relay:assign':
+                    relay.handleAssign(ws, msg);
+                    break;
+                case 'relay:answer':
+                    relay.handleAnswer(msg);
+                    break;
+                case 'agent:status':
+                    registry.updateStatus(ws, msg.status);
+                    break;
+            }
+        });
+        ws.on('close', () => registry.unregister(ws));
+    });
+
+    console.log(`[AgentHub] Hub server running on ws://localhost:${port}`);
+}
+```
+
+---
+
+## Component 2: MCP Agent (per-CLI)
+
+### 啟動方式
+
+由 CLI 自動 spawn（通過 `.mcp.json`），不需手動啟動。
+
+### .mcp.json 設定
+
+```json
+{
+  "mcpServers": {
+    "team": {
+      "command": "vibehq-agent",
+      "args": ["--name", "Jordan", "--role", "Frontend Engineer", "--hub", "ws://localhost:3001"]
+    }
+  }
+}
+```
+
+### MCP Tools Schema
+
+#### 1. `list_teammates`
+
+```json
+{
+  "name": "list_teammates",
+  "description": "List all registered teammates with their current status",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "required": []
+  }
+}
+```
+
+**Returns:**
+```json
+{
+  "teammates": [
+    { "name": "Jordan", "role": "Frontend Engineer", "status": "idle" },
+    { "name": "Riley", "role": "Backend Engineer", "status": "working" }
+  ]
+}
+```
+
+#### 2. `ask_teammate`
+
+```json
+{
+  "name": "ask_teammate",
+  "description": "Ask a teammate a question and wait for their response. Use this for quick questions, not for assigning large tasks.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "teammate_name": {
+        "type": "string",
+        "description": "Name of the teammate to ask (e.g. 'Jordan')"
+      },
+      "question": {
+        "type": "string",
+        "description": "The question or request to send"
+      }
+    },
+    "required": ["teammate_name", "question"]
+  }
+}
+```
+
+**Returns:**
+```json
+{
+  "from": "Jordan",
+  "response": "前端使用 Next.js 16 + React 19..."
+}
+```
+
+**Timeout:** 120 seconds (configurable). Returns timeout error if no response.
+
+#### 3. `assign_task`
+
+```json
+{
+  "name": "assign_task",
+  "description": "Assign a task to a teammate (non-blocking). The task will be delivered but you won't wait for completion. Use check_status to monitor progress.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "teammate_name": { "type": "string" },
+      "task_description": { "type": "string" },
+      "priority": {
+        "type": "string",
+        "enum": ["low", "medium", "high"],
+        "default": "medium"
+      }
+    },
+    "required": ["teammate_name", "task_description"]
+  }
+}
+```
+
+**Returns:**
+```json
+{
+  "status": "delivered",
+  "taskId": "uuid",
+  "message": "Task assigned to Jordan"
+}
+```
+
+#### 4. `check_status`
+
+```json
+{
+  "name": "check_status",
+  "description": "Check the current status of a specific teammate or all teammates",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "teammate_name": {
+        "type": "string",
+        "description": "Name of teammate. Omit to check all."
+      }
+    }
+  }
+}
+```
+
+### MCP Agent Implementation Notes
+
+```typescript
+// src/mcp/server.ts
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { HubClient } from './hub-client';
+
+export async function startAgent(name: string, role: string, hubUrl: string) {
+    const server = new McpServer({
+        name: `agent-hub-${name}`,
+        version: '0.1.0',
+    });
+
+    const hub = new HubClient(hubUrl, name, role);
+    await hub.connect();
+
+    // Register tools
+    server.tool('list_teammates', {}, async () => {
+        const teammates = hub.getTeammates();
+        return { content: [{ type: 'text', text: JSON.stringify({ teammates }) }] };
+    });
+
+    server.tool('ask_teammate', {
+        teammate_name: { type: 'string' },
+        question: { type: 'string' },
+    }, async (args) => {
+        const response = await hub.ask(args.teammate_name, args.question);
+        return { content: [{ type: 'text', text: JSON.stringify(response) }] };
+    });
+
+    // ... other tools
+
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+}
+```
+
+### How Incoming Questions Are Handled
+
+When a teammate asks this agent a question, the MCP server uses **MCP Sampling** (`createMessage`) to get the CLI to respond:
+
+```typescript
+// src/mcp/hub-client.ts (when receiving relay:question from Hub)
+
+hub.on('relay:question', async (msg) => {
+    // Use MCP sampling to ask the host CLI to generate a response
+    const result = await mcpServer.server.createMessage({
+        messages: [
+            {
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: `[Team Message from ${msg.fromAgent}]\n${msg.question}\n\nPlease respond to this question from your teammate.`,
+                },
+            },
+        ],
+        maxTokens: 4096,
+    });
+
+    // Send the response back to Hub
+    hub.send({
+        type: 'relay:answer',
+        requestId: msg.requestId,
+        answer: result.content.text,
+    });
+});
+```
+
+> **Fallback:** If the MCP client doesn't support sampling, fall back to returning the question as a "pending_messages" resource that the agent can poll.
+
+---
+
+## VibeHQ Integration
+
+### How VibeHQ Connects
+
+VibeHQ's frontend connects to the **same Hub Server** as a WebSocket client:
+
+```typescript
+// VibeHQ WS client connects to agent-hub
+const ws = new WebSocket('ws://localhost:3001');
+
+// Register as a "viewer" (not an agent)
+ws.send(JSON.stringify({ type: 'viewer:connect' }));
+
+// Receive all broadcast events
+ws.on('message', (data) => {
+    const msg = JSON.parse(data);
+    switch (msg.type) {
+        case 'agent:status:broadcast':
+            // Update agent idle/working status in UI
+            break;
+        case 'relay:start':
+            // Start walking animation
+            break;
+        case 'relay:done':
+            // End walking animation
+            break;
+    }
+});
+```
+
+### Event Mapping (agent-hub → VibeHQ)
+
+| agent-hub Event | VibeHQ Current Event | Action |
+|---|---|---|
+| `agent:status:broadcast` | `agent:status` | Update agent dot color |
+| `relay:start` | `relay:start` | Start walking animation |
+| `relay:done` | `relay:done` | End walking animation |
+| `agent:registered` | `agent:create` | Add agent to canvas |
+| `agent:disconnected` | — | Grey out agent |
+
+### Migration Path
+
+1. VibeHQ installs `@vibehq/agent-hub` as dependency
+2. Replace existing WS server relay logic with Hub client connection
+3. Keep all frontend animations as-is (same events, same data)
+4. Remove `@ask()` regex from transcript-watcher
+5. Agents use MCP tools instead of text patterns
+
+---
+
+## CLI Commands
+
+### `vibehq-hub`
+
+```
+Usage: vibehq-hub [options]
+
+Start the Agent Hub central server
+
+Options:
+  -p, --port <number>    Port number (default: 3001)
+  -v, --verbose          Enable verbose logging
+  -h, --help             Show help
+```
+
+### `vibehq-agent`
+
+```
+Usage: vibehq-agent [options]
+
+Start an MCP agent that connects to a Hub
+
+Options:
+  -n, --name <string>     Agent name (required)
+  -r, --role <string>     Agent role (default: "Engineer")
+  -u, --hub <url>         Hub WebSocket URL (default: ws://localhost:3001)
+  -t, --timeout <ms>      Ask timeout in ms (default: 120000)
+  -h, --help              Show help
+```
+
+---
+
+## Development Phases
+
+### Phase 1: Core (MVP)
+- [ ] Project setup (TypeScript, tsup, npm scripts)
+- [ ] Hub Server (WS, agent registry, relay routing)
+- [ ] MCP Agent (`list_teammates`, `ask_teammate`)
+- [ ] CLI commands (`vibehq-hub`, `vibehq-agent`)
+- [ ] Test with 2 Claude Code terminals
+
+### Phase 2: Async + Polish
+- [ ] `assign_task` tool (fire-and-forget)
+- [ ] `check_status` tool
+- [ ] Timeout handling and error recovery
+- [ ] Conversation logging
+
+### Phase 3: Cross-CLI Testing
+- [ ] Test with Gemini CLI
+- [ ] Test with Codex CLI
+- [ ] Test mixed CLI setups
+- [ ] Sampling fallback for unsupported clients
+
+### Phase 4: VibeHQ Integration
+- [ ] VibeHQ connects to Hub as viewer
+- [ ] Remove @ask regex from VibeHQ
+- [ ] Agents configured via MCP instead of VibeHQ spawn
+
+### Phase 5: npm Publish
+- [ ] README with demo GIF
+- [ ] npm publish @vibehq/agent-hub
+- [ ] Example configs for Claude/Gemini/Codex

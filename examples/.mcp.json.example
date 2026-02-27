@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "team": {
+      "command": "vibehq-agent",
+      "args": ["--name", "Jordan", "--role", "Frontend Engineer", "--hub", "ws://localhost:3001"]
+    }
+  }
+}
