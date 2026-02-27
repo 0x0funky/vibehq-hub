@@ -19,7 +19,7 @@ export class AgentRegistry {
     private agents: Map<WebSocket, ConnectedAgent> = new Map();
     private viewers: Set<WebSocket> = new Set();
     /** Spawner connections subscribed to an agent name */
-    private spawners: Map<WebSocket, string> = new Map();
+    private spawners: Map<WebSocket, { name: string; team: string }> = new Map();
     private verbose: boolean;
 
     constructor(verbose = false) {
@@ -31,12 +31,14 @@ export class AgentRegistry {
      */
     register(ws: WebSocket, msg: AgentRegisterMessage): ConnectedAgent {
         const agentId = randomUUID();
+        const team = msg.team || 'default';
         const agent: ConnectedAgent = {
             id: agentId,
             name: msg.name,
             role: msg.role ?? 'Engineer',
             capabilities: msg.capabilities ?? [],
             status: 'idle',
+            team,
             ws,
         };
 
@@ -46,19 +48,20 @@ export class AgentRegistry {
         const response: AgentRegisteredMessage = {
             type: 'agent:registered',
             agentId,
-            teammates: this.getTeammatesFor(agentId),
+            team,
+            teammates: this.getTeammatesFor(agentId, team),
         };
         ws.send(JSON.stringify(response));
 
-        // Broadcast status to all others (including viewers)
-        this.broadcastToAll({
+        // Broadcast status to all others in same team (including viewers)
+        this.broadcastToTeam(team, {
             type: 'agent:status:broadcast',
             agentId: agent.id,
             name: agent.name,
             status: agent.status,
         } satisfies AgentStatusBroadcastMessage, ws);
 
-        this.log(`Agent registered: ${agent.name} (${agent.role}) [${agentId}]`);
+        this.log(`Agent registered: ${agent.name} (${agent.role}) [${agentId}] team=${team}`);
         return agent;
     }
 
@@ -87,7 +90,7 @@ export class AgentRegistry {
         const agent = this.agents.get(ws);
         if (agent) {
             this.agents.delete(ws);
-            this.broadcastToAll({
+            this.broadcastToTeam(agent.team, {
                 type: 'agent:disconnected',
                 agentId: agent.id,
                 name: agent.name,
@@ -97,9 +100,9 @@ export class AgentRegistry {
 
         // Also clean up spawner subscriptions
         if (this.spawners.has(ws)) {
-            const name = this.spawners.get(ws);
+            const info = this.spawners.get(ws);
             this.spawners.delete(ws);
-            this.log(`Spawner disconnected for agent: ${name}`);
+            this.log(`Spawner disconnected for agent: ${info?.name}`);
         }
 
         this.viewers.delete(ws);
@@ -108,10 +111,10 @@ export class AgentRegistry {
     /**
      * Subscribe a spawner to shadow an agent name.
      */
-    subscribeSpawner(ws: WebSocket, agentName: string): Agent[] {
-        this.spawners.set(ws, agentName);
-        this.log(`Spawner subscribed to agent: ${agentName}`);
-        return this.getAllAgents();
+    subscribeSpawner(ws: WebSocket, agentName: string, team = 'default'): { teammates: Agent[]; team: string } {
+        this.spawners.set(ws, { name: agentName, team });
+        this.log(`Spawner subscribed to agent: ${agentName} team=${team}`);
+        return { teammates: this.getAllAgents(team), team };
     }
 
     /**
@@ -119,8 +122,8 @@ export class AgentRegistry {
      */
     getSpawnersForAgent(agentName: string): WebSocket[] {
         const result: WebSocket[] = [];
-        for (const [ws, name] of this.spawners.entries()) {
-            if (name.toLowerCase() === agentName.toLowerCase() && ws.readyState === WebSocket.OPEN) {
+        for (const [ws, info] of this.spawners.entries()) {
+            if (info.name.toLowerCase() === agentName.toLowerCase() && ws.readyState === WebSocket.OPEN) {
                 result.push(ws);
             }
         }
@@ -135,7 +138,7 @@ export class AgentRegistry {
         if (!agent) return;
 
         agent.status = status;
-        this.broadcastToAll({
+        this.broadcastToTeam(agent.team, {
             type: 'agent:status:broadcast',
             agentId: agent.id,
             name: agent.name,
@@ -146,11 +149,12 @@ export class AgentRegistry {
     }
 
     /**
-     * Get agent by name (case-insensitive).
+     * Get agent by name (case-insensitive), optionally filtered by team.
      */
-    getAgentByName(name: string): ConnectedAgent | undefined {
+    getAgentByName(name: string, team?: string): ConnectedAgent | undefined {
         for (const agent of this.agents.values()) {
             if (agent.name.toLowerCase() === name.toLowerCase()) {
+                if (team && agent.team !== team) continue;
                 return agent;
             }
         }
@@ -172,21 +176,56 @@ export class AgentRegistry {
     }
 
     /**
-     * Get all registered agents (without WS refs).
+     * Get agent's team by WebSocket connection.
      */
-    getAllAgents(): Agent[] {
-        return Array.from(this.agents.values()).map(({ ws, ...agent }) => agent);
+    getAgentTeamByWs(ws: WebSocket): string | undefined {
+        return this.agents.get(ws)?.team;
     }
 
     /**
-     * Get teammates (all agents except the specified one).
+     * Get all registered agents (without WS refs), optionally filtered by team.
      */
-    private getTeammatesFor(excludeId: string): Agent[] {
-        return this.getAllAgents().filter(a => a.id !== excludeId);
+    getAllAgents(team?: string): Agent[] {
+        return Array.from(this.agents.values())
+            .filter(a => !team || a.team === team)
+            .map(({ ws, ...agent }) => agent);
     }
 
     /**
-     * Broadcast a message to all agents and viewers, optionally excluding one.
+     * Get teammates (all agents in same team except the specified one).
+     */
+    private getTeammatesFor(excludeId: string, team: string): Agent[] {
+        return this.getAllAgents(team).filter(a => a.id !== excludeId);
+    }
+
+    /**
+     * Broadcast a message to all agents and viewers in a team, optionally excluding one.
+     */
+    broadcastToTeam(team: string, msg: HubMessage, excludeWs?: WebSocket): void {
+        const data = JSON.stringify(msg);
+
+        for (const agent of this.agents.values()) {
+            if (agent.team === team && agent.ws !== excludeWs && agent.ws.readyState === WebSocket.OPEN) {
+                agent.ws.send(data);
+            }
+        }
+
+        // Also send to spawners in the same team
+        for (const [ws, info] of this.spawners.entries()) {
+            if (info.team === team && ws !== excludeWs && ws.readyState === WebSocket.OPEN) {
+                ws.send(data);
+            }
+        }
+
+        for (const viewer of this.viewers) {
+            if (viewer !== excludeWs && viewer.readyState === WebSocket.OPEN) {
+                viewer.send(data);
+            }
+        }
+    }
+
+    /**
+     * Broadcast a message to all agents and viewers (all teams).
      */
     broadcastToAll(msg: HubMessage, excludeWs?: WebSocket): void {
         const data = JSON.stringify(msg);

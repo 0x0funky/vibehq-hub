@@ -28,6 +28,12 @@ export const MessageTypes = {
     SPAWNER_SUBSCRIBE: 'spawner:subscribe',
     SPAWNER_SUBSCRIBED: 'spawner:subscribed',
 
+    // Team updates
+    TEAM_UPDATE_POST: 'team:update:post',
+    TEAM_UPDATE_BROADCAST: 'team:update:broadcast',
+    TEAM_UPDATE_LIST: 'team:update:list',
+    TEAM_UPDATE_LIST_RESPONSE: 'team:update:list:response',
+
     // Relay: events (VibeHQ integration)
     RELAY_START: 'relay:start',
     RELAY_DONE: 'relay:done',

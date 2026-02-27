@@ -12,6 +12,7 @@ export interface Agent {
     role: string;
     capabilities: string[];
     status: AgentStatus;
+    team?: string;
 }
 
 // --- WS Messages: Agent Registration ---
@@ -21,11 +22,13 @@ export interface AgentRegisterMessage {
     name: string;
     role?: string;
     capabilities?: string[];
+    team?: string;
 }
 
 export interface AgentRegisteredMessage {
     type: 'agent:registered';
     agentId: string;
+    team: string;
     teammates: Agent[];
 }
 
@@ -141,12 +144,42 @@ export interface ViewerConnectMessage {
 export interface SpawnerSubscribeMessage {
     type: 'spawner:subscribe';
     name: string;
+    team?: string;
 }
 
 export interface SpawnerSubscribedMessage {
     type: 'spawner:subscribed';
     name: string;
+    team: string;
     teammates: Agent[];
+}
+
+// --- WS Messages: Team Updates ---
+
+export interface TeamUpdate {
+    from: string;
+    message: string;
+    timestamp: string;
+}
+
+export interface TeamUpdatePostMessage {
+    type: 'team:update:post';
+    message: string;
+}
+
+export interface TeamUpdateBroadcastMessage {
+    type: 'team:update:broadcast';
+    update: TeamUpdate;
+}
+
+export interface TeamUpdateListRequestMessage {
+    type: 'team:update:list';
+    limit?: number;
+}
+
+export interface TeamUpdateListResponseMessage {
+    type: 'team:update:list:response';
+    updates: TeamUpdate[];
 }
 
 // --- Union type for all messages ---
@@ -169,4 +202,8 @@ export type HubMessage =
     | RelayDoneMessage
     | ViewerConnectMessage
     | SpawnerSubscribeMessage
-    | SpawnerSubscribedMessage;
+    | SpawnerSubscribedMessage
+    | TeamUpdatePostMessage
+    | TeamUpdateBroadcastMessage
+    | TeamUpdateListRequestMessage
+    | TeamUpdateListResponseMessage;

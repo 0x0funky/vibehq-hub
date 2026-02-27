@@ -11,6 +11,7 @@ import type { Agent } from '../shared/types.js';
  */
 export interface ConnectedAgent extends Agent {
     ws: WebSocket;
+    team: string;
 }
 
 /**

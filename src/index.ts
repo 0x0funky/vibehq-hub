@@ -36,6 +36,13 @@ export type {
     RelayStartMessage,
     RelayDoneMessage,
     ViewerConnectMessage,
+    SpawnerSubscribeMessage,
+    SpawnerSubscribedMessage,
+    TeamUpdate,
+    TeamUpdatePostMessage,
+    TeamUpdateBroadcastMessage,
+    TeamUpdateListRequestMessage,
+    TeamUpdateListResponseMessage,
 } from './shared/types.js';
 
 export { MessageTypes } from './shared/protocol.js';

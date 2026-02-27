@@ -19,32 +19,33 @@ import type {
     RelayTaskMessage,
     RelayReplyMessage,
     RelayReplyDeliveredMessage,
+    TeamUpdate,
+    TeamUpdatePostMessage,
+    TeamUpdateListRequestMessage,
+    TeamUpdateListResponseMessage,
+    TeamUpdateBroadcastMessage,
     AgentStatus,
     TaskPriority,
 } from '../shared/types.js';
-
-interface PendingAsk {
-    resolve: (answer: string) => void;
-    reject: (error: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
-}
 
 export class HubClient extends EventEmitter {
     private ws: WebSocket | null = null;
     private hubUrl: string;
     private agentName: string;
     private agentRole: string;
+    private agentTeam: string;
     private agentId: string | null = null;
     private teammates: Map<string, Agent> = new Map();
-    private pendingAsks: Map<string, PendingAsk> = new Map();
     private askTimeout: number;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    private pendingUpdateRequests: Map<string, (updates: TeamUpdate[]) => void> = new Map();
 
-    constructor(hubUrl: string, name: string, role: string, askTimeout = 120000) {
+    constructor(hubUrl: string, name: string, role: string, team = 'default', askTimeout = 120000) {
         super();
         this.hubUrl = hubUrl;
         this.agentName = name;
         this.agentRole = role;
+        this.agentTeam = team;
         this.askTimeout = askTimeout;
     }
 
@@ -62,6 +63,7 @@ export class HubClient extends EventEmitter {
                         type: 'agent:register',
                         name: this.agentName,
                         role: this.agentRole,
+                        team: this.agentTeam,
                     } satisfies AgentRegisterMessage);
                 });
 
@@ -92,7 +94,6 @@ export class HubClient extends EventEmitter {
                             break;
 
                         case 'relay:response':
-                            this.handleResponse(msg as RelayResponseMessage);
                             break;
 
                         case 'relay:task':
@@ -101,6 +102,14 @@ export class HubClient extends EventEmitter {
 
                         case 'relay:reply:delivered':
                             this.emit('relay:reply', msg as RelayReplyDeliveredMessage);
+                            break;
+
+                        case 'team:update:broadcast':
+                            this.emit('team:update', (msg as TeamUpdateBroadcastMessage).update);
+                            break;
+
+                        case 'team:update:list:response':
+                            this.handleUpdateListResponse(msg as TeamUpdateListResponseMessage);
                             break;
                     }
                 });
@@ -132,7 +141,7 @@ export class HubClient extends EventEmitter {
     }
 
     /**
-     * Ask a teammate a question (fire-and-forget, reply comes back via relay:reply:delivered).
+     * Ask a teammate a question (fire-and-forget).
      */
     ask(teammateName: string, question: string): string {
         const requestId = randomUUID();
@@ -178,6 +187,39 @@ export class HubClient extends EventEmitter {
     }
 
     /**
+     * Post a team update.
+     */
+    postUpdate(message: string): void {
+        this.send({
+            type: 'team:update:post',
+            message,
+        } satisfies TeamUpdatePostMessage);
+    }
+
+    /**
+     * Get recent team updates.
+     */
+    async getUpdates(limit = 20): Promise<TeamUpdate[]> {
+        return new Promise((resolve) => {
+            const requestId = randomUUID();
+            this.pendingUpdateRequests.set(requestId, resolve);
+
+            this.send({
+                type: 'team:update:list',
+                limit,
+            } satisfies TeamUpdateListRequestMessage);
+
+            // Resolve with the next response within 5s
+            setTimeout(() => {
+                if (this.pendingUpdateRequests.has(requestId)) {
+                    this.pendingUpdateRequests.delete(requestId);
+                    resolve([]);
+                }
+            }, 5000);
+        });
+    }
+
+    /**
      * Update this agent's status on the Hub.
      */
     updateStatus(status: AgentStatus): void {
@@ -204,6 +246,13 @@ export class HubClient extends EventEmitter {
     }
 
     /**
+     * Get the team name.
+     */
+    getTeam(): string {
+        return this.agentTeam;
+    }
+
+    /**
      * Send an answer back to the Hub for a relay:question.
      */
     sendAnswer(requestId: string, answer: string): void {
@@ -218,11 +267,12 @@ export class HubClient extends EventEmitter {
 
     private handleRegistered(msg: AgentRegisteredMessage): void {
         this.agentId = msg.agentId;
+        this.agentTeam = msg.team;
         this.teammates.clear();
         for (const agent of msg.teammates) {
             this.teammates.set(agent.id, agent);
         }
-        console.error(`[HubClient] Registered as "${this.agentName}" (${this.agentId}), ${msg.teammates.length} teammates online`);
+        console.error(`[HubClient] Registered as "${this.agentName}" (${this.agentId}), team="${this.agentTeam}", ${msg.teammates.length} teammates online`);
     }
 
     private handleStatusBroadcast(msg: AgentStatusBroadcastMessage): void {
@@ -245,12 +295,12 @@ export class HubClient extends EventEmitter {
         this.teammates.delete(msg.agentId);
     }
 
-    private handleResponse(msg: RelayResponseMessage): void {
-        const pending = this.pendingAsks.get(msg.requestId);
-        if (pending) {
-            clearTimeout(pending.timer);
-            this.pendingAsks.delete(msg.requestId);
-            pending.resolve(msg.answer);
+    private handleUpdateListResponse(msg: TeamUpdateListResponseMessage): void {
+        // Resolve the first pending request
+        for (const [id, resolve] of this.pendingUpdateRequests.entries()) {
+            this.pendingUpdateRequests.delete(id);
+            resolve(msg.updates);
+            break;
         }
     }
 

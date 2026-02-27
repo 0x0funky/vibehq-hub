@@ -4,11 +4,12 @@
 
 import { startAgent } from '../src/mcp/server.js';
 
-function parseArgs(): { name: string; role: string; hub: string; timeout: number } {
+function parseArgs(): { name: string; role: string; hub: string; team: string; timeout: number } {
     const args = process.argv.slice(2);
     let name = '';
     let role = 'Engineer';
     let hub = 'ws://localhost:3001';
+    let team = 'default';
     let timeout = 120000;
 
     for (let i = 0; i < args.length; i++) {
@@ -24,6 +25,9 @@ function parseArgs(): { name: string; role: string; hub: string; timeout: number
             case '-u':
             case '--hub':
                 hub = args[++i];
+                break;
+            case '--team':
+                team = args[++i];
                 break;
             case '-t':
             case '--timeout':
@@ -44,6 +48,7 @@ Options:
   -n, --name <string>     Agent name (required)
   -r, --role <string>     Agent role (default: "Engineer")
   -u, --hub <url>         Hub WebSocket URL (default: ws://localhost:3001)
+      --team <string>     Team name (default: "default")
   -t, --timeout <ms>      Ask timeout in ms (default: 120000)
   -h, --help              Show help
 `);
@@ -53,12 +58,12 @@ Options:
 
     if (!name) {
         console.error('Error: --name is required');
-        console.error('Usage: vibehq-agent --name <name> [--role <role>] [--hub <url>]');
+        console.error('Usage: vibehq-agent --name <name> [--role <role>] [--hub <url>] [--team <team>]');
         process.exit(1);
     }
 
-    return { name, role, hub, timeout };
+    return { name, role, hub, team, timeout };
 }
 
-const { name, role, hub, timeout } = parseArgs();
-startAgent({ name, role, hubUrl: hub, askTimeout: timeout });
+const { name, role, hub, team, timeout } = parseArgs();
+startAgent({ name, role, hubUrl: hub, team, askTimeout: timeout });

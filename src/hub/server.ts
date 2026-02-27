@@ -5,7 +5,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { AgentRegistry } from './registry.js';
 import { RelayEngine } from './relay.js';
-import type { HubMessage } from '../shared/types.js';
+import type { HubMessage, TeamUpdate, TeamUpdateBroadcastMessage, TeamUpdateListResponseMessage } from '../shared/types.js';
 
 export interface HubOptions {
     port: number;
@@ -16,6 +16,9 @@ export function startHub(options: HubOptions): WebSocketServer {
     const { port, verbose = false } = options;
     const registry = new AgentRegistry(verbose);
     const relay = new RelayEngine(registry, verbose);
+
+    // Team updates store (in-memory, max 50 per team)
+    const teamUpdates: Map<string, TeamUpdate[]> = new Map();
 
     const wss = new WebSocketServer({ port });
 
@@ -72,14 +75,61 @@ export function startHub(options: HubOptions): WebSocketServer {
                     registry.registerViewer(ws);
                     break;
 
-                case 'spawner:subscribe':
-                    const teammates = registry.subscribeSpawner(ws, (msg as any).name);
+                case 'spawner:subscribe': {
+                    const team = msg.team || 'default';
+                    const result = registry.subscribeSpawner(ws, msg.name, team);
                     ws.send(JSON.stringify({
                         type: 'spawner:subscribed',
-                        name: (msg as any).name,
-                        teammates,
+                        name: msg.name,
+                        team: result.team,
+                        teammates: result.teammates,
                     }));
                     break;
+                }
+
+                case 'team:update:post': {
+                    const poster = registry.getAgentByWs(ws);
+                    if (!poster) break;
+
+                    const update: TeamUpdate = {
+                        from: poster.name,
+                        message: msg.message,
+                        timestamp: new Date().toISOString(),
+                    };
+
+                    // Store update
+                    const team = poster.team || 'default';
+                    if (!teamUpdates.has(team)) teamUpdates.set(team, []);
+                    const updates = teamUpdates.get(team)!;
+                    updates.push(update);
+                    if (updates.length > 50) updates.shift();
+
+                    // Broadcast to team
+                    registry.broadcastToTeam(team, {
+                        type: 'team:update:broadcast',
+                        update,
+                    } satisfies TeamUpdateBroadcastMessage);
+
+                    if (verbose) {
+                        console.log(`[Hub] Update from ${poster.name} (${team}): ${msg.message.substring(0, 80)}`);
+                    }
+                    break;
+                }
+
+                case 'team:update:list': {
+                    const requester = registry.getAgentByWs(ws);
+                    if (!requester) break;
+
+                    const team = requester.team || 'default';
+                    const allUpdates = teamUpdates.get(team) || [];
+                    const limit = msg.limit || 20;
+
+                    ws.send(JSON.stringify({
+                        type: 'team:update:list:response',
+                        updates: allUpdates.slice(-limit),
+                    } satisfies TeamUpdateListResponseMessage));
+                    break;
+                }
 
                 default:
                     if (verbose) {

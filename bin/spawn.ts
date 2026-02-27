@@ -15,21 +15,23 @@ Options:
   -n, --name <string>     Agent name (required)
   -r, --role <string>     Agent role (default: "Engineer")
   -u, --hub <url>         Hub WebSocket URL (default: ws://localhost:3001)
+      --team <string>     Team name (default: "default")
   -t, --timeout <ms>      Response timeout in ms (default: 120000)
   -h, --help              Show help
 
 Examples:
-  vibehq-spawn --name Claude --role "Backend Engineer" -- claude
-  vibehq-spawn --name Codex --role "Frontend Engineer" -- codex
-  vibehq-spawn -n Gemini -r "Full Stack" -- gemini
+  vibehq-spawn --name Claude --role "Backend Engineer" --team dexless -- claude
+  vibehq-spawn --name Codex --role "Frontend Engineer" --team dexless -- codex
+  vibehq-spawn -n Gemini -r "Full Stack" --team myteam -- gemini
 `);
 }
 
-function parseArgs(): { name: string; role: string; hub: string; timeout: number; command: string; commandArgs: string[] } {
+function parseArgs(): { name: string; role: string; hub: string; team: string; timeout: number; command: string; commandArgs: string[] } {
     const args = process.argv.slice(2);
     let name = '';
     let role = 'Engineer';
     let hub = 'ws://localhost:3001';
+    let team = 'default';
     let timeout = 120000;
     let command = '';
     let commandArgs: string[] = [];
@@ -58,6 +60,9 @@ function parseArgs(): { name: string; role: string; hub: string; timeout: number
             case '--hub':
                 hub = ourArgs[++i];
                 break;
+            case '--team':
+                team = ourArgs[++i];
+                break;
             case '-t':
             case '--timeout':
                 timeout = parseInt(ourArgs[++i], 10);
@@ -81,23 +86,23 @@ function parseArgs(): { name: string; role: string; hub: string; timeout: number
 
     if (!command) {
         console.error('Error: command is required after --');
-        console.error('Example: vibehq-spawn --name Claude -- claude');
+        console.error('Example: vibehq-spawn --name Claude --team dexless -- claude');
         printHelp();
         process.exit(1);
     }
 
-    return { name, role, hub, timeout, command, commandArgs };
+    return { name, role, hub, team, timeout, command, commandArgs };
 }
 
-const { name, role, hub, timeout, command, commandArgs } = parseArgs();
+const { name, role, hub, team, timeout, command, commandArgs } = parseArgs();
 
 const spawner = new AgentSpawner({
     name,
     role,
     hubUrl: hub,
+    team,
     command,
     args: commandArgs,
-    askTimeout: timeout,
 });
 
 spawner.start().catch(() => {

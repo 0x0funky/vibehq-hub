@@ -10,16 +10,19 @@ import { registerAskTeammate } from './tools/ask-teammate.js';
 import { registerAssignTask } from './tools/assign-task.js';
 import { registerCheckStatus } from './tools/check-status.js';
 import { registerReplyToTeam } from './tools/reply-to-team.js';
+import { registerShareFile, registerReadSharedFile, registerListSharedFiles } from './tools/share-file.js';
+import { registerPostUpdate, registerGetTeamUpdates } from './tools/team-updates.js';
 
 export interface AgentOptions {
     name: string;
     role: string;
     hubUrl: string;
+    team?: string;
     askTimeout?: number;
 }
 
 export async function startAgent(options: AgentOptions): Promise<void> {
-    const { name, role, hubUrl, askTimeout = 120000 } = options;
+    const { name, role, hubUrl, team = 'default', askTimeout = 120000 } = options;
 
     // Create MCP server
     const server = new McpServer({
@@ -28,7 +31,7 @@ export async function startAgent(options: AgentOptions): Promise<void> {
     });
 
     // Create Hub client
-    const hub = new HubClient(hubUrl, name, role, askTimeout);
+    const hub = new HubClient(hubUrl, name, role, team, askTimeout);
 
     // Register all MCP tools
     registerListTeammates(server, hub);
@@ -36,6 +39,11 @@ export async function startAgent(options: AgentOptions): Promise<void> {
     registerAssignTask(server, hub);
     registerCheckStatus(server, hub);
     registerReplyToTeam(server, hub);
+    registerShareFile(server, team);
+    registerReadSharedFile(server, team);
+    registerListSharedFiles(server, team);
+    registerPostUpdate(server, hub);
+    registerGetTeamUpdates(server, hub);
 
     // Connect to Hub
     try {
@@ -50,5 +58,5 @@ export async function startAgent(options: AgentOptions): Promise<void> {
     const transport = new StdioServerTransport();
     await server.connect(transport);
 
-    console.error(`[Agent] MCP server "${name}" connected and ready`);
+    console.error(`[Agent] MCP server "${name}" (team: ${team}) connected and ready`);
 }
