@@ -10,6 +10,7 @@ import { c, screen, cursor } from '../src/tui/renderer.js';
 import { welcomeScreen } from '../src/tui/screens/welcome.js';
 import { createTeamScreen } from '../src/tui/screens/create-team.js';
 import { DashboardScreen } from '../src/tui/screens/dashboard.js';
+import { settingsScreen } from '../src/tui/screens/settings.js';
 import { selectMenu } from '../src/tui/menu.js';
 import { prompt } from '../src/tui/input.js';
 
@@ -196,14 +197,13 @@ async function startTeam(configPath: string): Promise<void> {
     });
 }
 
-// --- Run dashboard (returns on [b], exits on [q]) ---
+// --- Run dashboard (returns on [b]) ---
 async function runDashboard(dashConfig: { team: string; hub: { port: number }; agents: AgentConfig[] }): Promise<void> {
     const dashboard = new DashboardScreen(dashConfig);
     await dashboard.start();
-    // User pressed [b] — return to caller
 }
 
-// --- Dashboard-only flow ---
+// --- Dashboard-only flow (without starting hub) ---
 async function dashboardOnly(configPath: string): Promise<void> {
     const teams = loadTeams(configPath);
     let dashConfig: { team: string; hub: { port: number }; agents: AgentConfig[] };
@@ -231,7 +231,7 @@ async function interactive(configPath: string): Promise<void> {
         switch (choice) {
             case 'start':
                 await startTeam(configPath);
-                // startTeam calls runDashboard which returns on [b] — loop back to menu
+                // Returns here after [b] press in dashboard — loop back to menu
                 break;
 
             case 'create': {
@@ -241,7 +241,6 @@ async function interactive(configPath: string): Promise<void> {
                     const startNow = await prompt('Start team now? (y/n)', 'y');
                     if (startNow.toLowerCase() === 'y') {
                         await startTeam(savedFile);
-                        return;
                     }
                 }
                 break;
@@ -249,7 +248,11 @@ async function interactive(configPath: string): Promise<void> {
 
             case 'dashboard':
                 await dashboardOnly(configPath);
-                return;
+                break; // Returns to menu on [b]
+
+            case 'settings':
+                await settingsScreen(configPath);
+                break;
 
             case 'quit':
                 process.stdout.write(cursor.show + screen.clear);
