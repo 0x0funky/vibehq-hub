@@ -6,6 +6,7 @@ import { startHub } from '../src/hub/server.js';
 import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { exec } from 'child_process';
 import { createServer } from 'net';
+import type { WebSocketServer } from 'ws';
 import { c, screen, cursor } from '../src/tui/renderer.js';
 import { welcomeScreen } from '../src/tui/screens/welcome.js';
 import { createTeamScreen } from '../src/tui/screens/create-team.js';
@@ -13,6 +14,18 @@ import { DashboardScreen } from '../src/tui/screens/dashboard.js';
 import { settingsScreen } from '../src/tui/screens/settings.js';
 import { selectMenu } from '../src/tui/menu.js';
 import { prompt } from '../src/tui/input.js';
+
+// --- Running hub tracker ---
+let runningHub: { wss: WebSocketServer; port: number } | null = null;
+
+async function stopHub(): Promise<void> {
+    if (!runningHub) return;
+    await new Promise<void>((resolve) => {
+        runningHub!.wss.close(() => resolve());
+        setTimeout(resolve, 1000); // Timeout fallback
+    });
+    runningHub = null;
+}
 
 // --- Types ---
 interface AgentConfig {
@@ -166,19 +179,39 @@ async function startTeam(configPath: string): Promise<void> {
     // Select team if multiple
     const team = await selectTeam(teams);
 
-    // Check port availability
+    // Stop existing hub if running on a different port (or restart it)
+    if (runningHub) {
+        if (runningHub.port === team.hub.port) {
+            // Same port — reuse, skip port check & startHub
+            process.stdout.write(screen.clear);
+            console.log(`\n  ${c.bold}${c.brightCyan}⚡ Team "${team.name}"${c.reset}  ${c.dim}(hub already running on port ${team.hub.port})${c.reset}\n`);
+            console.log(`  ${c.bold}Spawning ${team.agents.length} agent${team.agents.length !== 1 ? 's' : ''}...${c.reset}\n`);
+            await new Promise(r => setTimeout(r, 500));
+            spawnAgents(team);
+            console.log(`\n  ${c.dim}Opening dashboard in 2s...${c.reset}\n`);
+            await new Promise(r => setTimeout(r, 2000));
+            await runDashboard({ team: team.name, hub: team.hub, agents: team.agents });
+            return;
+        }
+        // Different port — close old hub
+        console.log(`  ${c.dim}Stopping previous hub on port ${runningHub.port}...${c.reset}`);
+        await stopHub();
+        await new Promise(r => setTimeout(r, 500));
+    }
+
+    // Check port availability (only for fresh starts)
     const portStatus = await checkPort(team.hub.port);
     if (portStatus !== 'available') {
         process.stdout.write(screen.clear);
         if (portStatus === 'inuse') {
             console.log(`\n  ${c.yellow}⚠${c.reset} Port ${c.bold}${team.hub.port}${c.reset} is already in use.`);
-            console.log(`  ${c.dim}A hub may already be running. Use "Dashboard" to connect, or change the port.${c.reset}\n`);
+            console.log(`  ${c.dim}Another process is using this port. Change it in Settings or use Dashboard to connect.${c.reset}\n`);
         } else {
             console.log(`\n  ${c.red}✗${c.reset} Port ${c.bold}${team.hub.port}${c.reset} is restricted by Windows.`);
-            console.log(`  ${c.dim}Windows reserves some ports via netsh. Try a different port (e.g. 4001, 5001, 8080).${c.reset}`);
-            console.log(`  ${c.dim}Check excluded ranges: netsh int ipv4 show excludedportrange tcp${c.reset}\n`);
+            console.log(`  ${c.dim}Try a different port (e.g. 4001, 5001, 8080).${c.reset}`);
+            console.log(`  ${c.dim}Check: netsh int ipv4 show excludedportrange tcp${c.reset}\n`);
         }
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 400));
         return;
     }
 
@@ -187,7 +220,8 @@ async function startTeam(configPath: string): Promise<void> {
 
     // Start Hub
     console.log(`  ${c.green}✓${c.reset} Hub started on port ${team.hub.port}`);
-    startHub({ port: team.hub.port, verbose: false });
+    const wss = startHub({ port: team.hub.port, verbose: false });
+    runningHub = { wss, port: team.hub.port };
 
     // Spawn agents
     console.log(`  ${c.bold}Spawning ${team.agents.length} agent${team.agents.length !== 1 ? 's' : ''}...${c.reset}\n`);
@@ -195,7 +229,7 @@ async function startTeam(configPath: string): Promise<void> {
     spawnAgents(team);
 
     // Launch dashboard
-    console.log(`\n  ${c.dim}Opening dashboard in 3s... Press [q] to quit, [b] to go back${c.reset}\n`);
+    console.log(`\n  ${c.dim}Opening dashboard in 3s... Press [q] to return to menu${c.reset}\n`);
     await new Promise(r => setTimeout(r, 3000));
 
     await runDashboard({
@@ -203,6 +237,7 @@ async function startTeam(configPath: string): Promise<void> {
         hub: team.hub,
         agents: team.agents,
     });
+    // Hub stays running for reconnection if user starts same team again
 }
 
 // --- Run dashboard (returns when [q] pressed) ---
