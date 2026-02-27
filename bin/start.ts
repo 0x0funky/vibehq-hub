@@ -17,7 +17,8 @@ import { prompt } from '../src/tui/input.js';
 
 // --- Running hub tracker ---
 let runningHub: { wss: WebSocketServer; port: number } | null = null;
-let spawnedPids: number[] = [];
+// Track spawned agent names for killing
+let spawnedAgentNames: string[] = [];
 
 async function stopHub(): Promise<void> {
     if (!runningHub) return;
@@ -29,17 +30,16 @@ async function stopHub(): Promise<void> {
 }
 
 function stopAgents(): void {
-    if (spawnedPids.length === 0) return;
-    for (const pid of spawnedPids) {
-        try {
-            if (process.platform === 'win32') {
-                exec(`taskkill /F /T /PID ${pid}`);
-            } else {
-                process.kill(pid, 'SIGTERM');
-            }
-        } catch { }
+    if (spawnedAgentNames.length === 0) return;
+    if (process.platform === 'win32') {
+        // Kill vibehq-spawn processes matching each agent name
+        for (const name of spawnedAgentNames) {
+            exec(`wmic process where "commandline like '%vibehq-spawn%--name \"${name}\"%'" call terminate`, () => { });
+        }
+    } else {
+        exec(`pkill -f 'vibehq-spawn'`, () => { });
     }
-    spawnedPids = [];
+    spawnedAgentNames = [];
 }
 
 // --- Types ---
@@ -165,19 +165,17 @@ async function selectTeam(teams: TeamConfig[]): Promise<TeamConfig> {
     return teams.find(t => t.name === choice)!;
 }
 
-// --- Spawn agents (returns PIDs of spawned processes) ---
+// --- Spawn agents ---
 function spawnAgents(team: TeamConfig): void {
     const hubUrl = `ws://localhost:${team.hub.port}`;
-    spawnedPids = []; // Reset for this team session
+    spawnedAgentNames = team.agents.map(a => a.name); // Track for killing
 
     for (const agent of team.agents) {
         const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}" -- ${agent.cli}`;
 
         if (process.platform === 'win32') {
-            // Use direct wt call — track the PID
             const wtCmd = `wt -w new --title "${agent.name}" -d "${agent.cwd}" cmd /k "chcp 65001 >nul && ${spawnCmd}"`;
-            const child = exec(wtCmd);
-            if (child.pid) spawnedPids.push(child.pid);
+            exec(wtCmd);
         } else {
             exec(`osascript -e 'tell app "Terminal" to do script "cd \'${agent.cwd}\' && ${spawnCmd}"'`);
         }
@@ -269,27 +267,21 @@ async function runDashboard(dashConfig: { team: string; hub: { port: number }; a
 
 // --- Dashboard-only flow (without starting hub) ---
 async function dashboardOnly(configPath: string): Promise<void> {
+    const teams = loadTeams(configPath);
     let dashConfig: { team: string; hub: { port: number }; agents: AgentConfig[] };
 
-    // If a hub is already running, use its actual port
-    if (runningHub) {
-        const teams = loadTeams(configPath);
-        const agents = teams?.flatMap(t => t.agents) ?? [];
-        const teamName = teams?.[0]?.name ?? 'default';
-        dashConfig = { team: teamName, hub: { port: runningHub.port }, agents };
+    if (teams && teams.length > 0) {
+        const team = await selectTeam(teams);
+        // Use runningHub port if available (actual port after auto-scan)
+        const port = runningHub?.port ?? team.hub.port;
+        dashConfig = { team: team.name, hub: { port }, agents: team.agents };
     } else {
-        const teams = loadTeams(configPath);
-        if (teams && teams.length > 0) {
-            const team = await selectTeam(teams);
-            dashConfig = { team: team.name, hub: team.hub, agents: team.agents };
-        } else {
-            const portStr = await prompt('Hub port', '3001');
-            dashConfig = {
-                team: 'default',
-                hub: { port: parseInt(portStr, 10) || 3001 },
-                agents: [],
-            };
-        }
+        const portStr = await prompt('Hub port', String(runningHub?.port ?? 3001));
+        dashConfig = {
+            team: 'default',
+            hub: { port: parseInt(portStr, 10) || 3001 },
+            agents: [],
+        };
     }
 
     await runDashboard(dashConfig);
