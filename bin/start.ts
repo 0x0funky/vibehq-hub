@@ -99,12 +99,16 @@ function loadTeams(configPath: string): TeamConfig[] | null {
 }
 
 // --- Check if port is available ---
-async function checkPort(port: number): Promise<boolean> {
+type PortStatus = 'available' | 'inuse' | 'restricted';
+async function checkPort(port: number): Promise<PortStatus> {
     return new Promise((resolve) => {
         const server = createServer();
-        server.once('error', () => resolve(false));
-        server.once('listening', () => { server.close(); resolve(true); });
-        server.listen(port);
+        server.once('error', (err: NodeJS.ErrnoException) => {
+            if (err.code === 'EADDRINUSE') resolve('inuse');
+            else resolve('restricted'); // EACCES or other
+        });
+        server.once('listening', () => { server.close(); resolve('available'); });
+        server.listen(port, '127.0.0.1');
     });
 }
 
@@ -163,13 +167,17 @@ async function startTeam(configPath: string): Promise<void> {
     const team = await selectTeam(teams);
 
     // Check port availability
-    const portOk = await checkPort(team.hub.port);
-    if (!portOk) {
+    const portStatus = await checkPort(team.hub.port);
+    if (portStatus !== 'available') {
         process.stdout.write(screen.clear);
-        console.log(`\n  ${c.red}✗${c.reset} Port ${c.bold}${team.hub.port}${c.reset} is already in use!\n`);
-        console.log(`  ${c.dim}Another hub may already be running on this port.${c.reset}`);
-        console.log(`  ${c.dim}Try changing the port in vibehq.config.json, or use:\n${c.reset}`);
-        console.log(`  ${c.cyan}vibehq dashboard${c.reset}  ${c.dim}— to connect to the existing hub${c.reset}\n`);
+        if (portStatus === 'inuse') {
+            console.log(`\n  ${c.yellow}⚠${c.reset} Port ${c.bold}${team.hub.port}${c.reset} is already in use.`);
+            console.log(`  ${c.dim}A hub may already be running. Use "Dashboard" to connect, or change the port.${c.reset}\n`);
+        } else {
+            console.log(`\n  ${c.red}✗${c.reset} Port ${c.bold}${team.hub.port}${c.reset} is restricted by Windows.`);
+            console.log(`  ${c.dim}Windows reserves some ports via netsh. Try a different port (e.g. 4001, 5001, 8080).${c.reset}`);
+            console.log(`  ${c.dim}Check excluded ranges: netsh int ipv4 show excludedportrange tcp${c.reset}\n`);
+        }
         await new Promise(r => setTimeout(r, 300));
         return;
     }
@@ -197,7 +205,7 @@ async function startTeam(configPath: string): Promise<void> {
     });
 }
 
-// --- Run dashboard (returns on [b]) ---
+// --- Run dashboard (returns when [q] pressed) ---
 async function runDashboard(dashConfig: { team: string; hub: { port: number }; agents: AgentConfig[] }): Promise<void> {
     const dashboard = new DashboardScreen(dashConfig);
     await dashboard.start();

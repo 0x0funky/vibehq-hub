@@ -6,7 +6,7 @@ import WebSocket from 'ws';
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { c, box, separator, padRight, cursor, screen, getWidth, stripAnsi, truncate } from '../renderer.js';
+import { c, padRight, cursor, screen, getWidth, stripAnsi } from '../renderer.js';
 import type { Agent, TeamUpdate } from '../../shared/types.js';
 
 interface AgentConfig {
@@ -29,38 +29,34 @@ export class DashboardScreen {
     private config: DashboardConfig;
     private interval: ReturnType<typeof setInterval> | null = null;
     private startTime = Date.now();
+    private destroyed = false; // Prevents reconnect after cleanup
 
     constructor(config: DashboardConfig) {
         this.config = config;
     }
 
-    start(): Promise<'back' | 'quit'> {
+    start(): Promise<void> {
+        this.destroyed = false;
         return new Promise((resolve) => {
             const hubUrl = `ws://localhost:${this.config.hub.port}`;
             this.connectWithRetry(hubUrl);
 
             // Refresh every 2s
-            this.interval = setInterval(() => this.render(), 2000);
+            this.interval = setInterval(() => {
+                if (!this.destroyed) this.render();
+            }, 2000);
 
             // Keyboard handler — stored so we can remove it
             const keyHandler = (key: string) => {
-                if (key === 'q') {
-                    process.stdin.removeListener('data', keyHandler);
-                    this.cleanup();
-                    process.exit(0);
-                } else if (key === '\x03') { // Ctrl+C
-                    process.stdin.removeListener('data', keyHandler);
-                    this.cleanup();
-                    process.exit(0);
-                } else if (key === 'b') {
-                    // Remove listener FIRST, then cleanup
+                if (key === 'q' || key === '\x03') {
+                    // q or Ctrl+C → return to main menu
                     process.stdin.removeListener('data', keyHandler);
                     if (process.stdin.isTTY) {
                         process.stdin.setRawMode(false);
                         process.stdin.pause();
                     }
                     this.cleanup();
-                    resolve('back');
+                    resolve(); // Return to caller (main menu)
                 } else if (key === 'r') {
                     this.render();
                 }
@@ -75,25 +71,37 @@ export class DashboardScreen {
 
             process.stdout.write(cursor.hide);
             this.render();
-        }); // end Promise
+        });
     }
 
     private connectWithRetry(hubUrl: string): void {
+        if (this.destroyed) return; // Stop reconnecting after cleanup
+
         try {
             this.ws = new WebSocket(hubUrl);
             this.ws.on('open', () => {
+                if (this.destroyed) { this.ws?.close(); return; }
                 this.ws!.send(JSON.stringify({ type: 'viewer:connect' }));
                 this.render();
             });
             this.ws.on('message', (raw) => {
-                try {
-                    this.handleMessage(JSON.parse(raw.toString()));
-                } catch { }
+                if (this.destroyed) return;
+                try { this.handleMessage(JSON.parse(raw.toString())); } catch { }
             });
-            this.ws.on('close', () => setTimeout(() => this.connectWithRetry(hubUrl), 2000));
-            this.ws.on('error', () => setTimeout(() => this.connectWithRetry(hubUrl), 2000));
+            this.ws.on('close', () => {
+                if (!this.destroyed) {
+                    setTimeout(() => this.connectWithRetry(hubUrl), 2000);
+                }
+            });
+            this.ws.on('error', () => {
+                if (!this.destroyed) {
+                    setTimeout(() => this.connectWithRetry(hubUrl), 2000);
+                }
+            });
         } catch {
-            setTimeout(() => this.connectWithRetry(hubUrl), 2000);
+            if (!this.destroyed) {
+                setTimeout(() => this.connectWithRetry(hubUrl), 2000);
+            }
         }
     }
 
@@ -122,6 +130,7 @@ export class DashboardScreen {
     }
 
     private render(): void {
+        if (this.destroyed) return;
         const W = getWidth();
         const inner = W - 2;
         const now = new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -147,27 +156,22 @@ export class DashboardScreen {
         // ═══ Agents ═══
         out += `${bc}│${c.reset} ${c.bold}${c.white} AGENTS${c.reset}${padRight('', inner - 8)}${bc}│${c.reset}\n`;
         out += `${bc}│${c.reset}${padRight('', inner)}${bc}│${c.reset}\n`;
-
-        // Header row
         out += `${bc}│${c.reset}  ${c.dim}${padRight('NAME', 12)}${padRight('ROLE', 24)}${padRight('CLI', 10)}${padRight('STATUS', 10)}${c.reset}${bc}│${c.reset}\n`;
         out += `${bc}│${c.reset}  ${c.dim}${'─'.repeat(12)}${'─'.repeat(24)}${'─'.repeat(10)}${'─'.repeat(inner - 50)}${c.reset}  ${bc}│${c.reset}\n`;
 
         const onlineNames = new Set(Array.from(this.agents.values()).map(a => a.name));
 
-        // Online agents
         for (const agent of this.agents.values()) {
-            const statusColor = agent.status === 'idle' ? c.green
-                : agent.status === 'working' ? c.yellow : c.magenta;
+            const statusColor = agent.status === 'idle' ? c.green : agent.status === 'working' ? c.yellow : c.magenta;
             const dot = `${statusColor}●${c.reset}`;
             const cli = this.config.agents.find(a => a.name === agent.name)?.cli || '?';
             const statusStr = `${statusColor}${agent.status}${c.reset}`;
             out += `${bc}│${c.reset}  ${dot} ${padRight(c.bold + agent.name + c.reset, 11 + c.bold.length + c.reset.length)}${padRight(agent.role || '—', 24)}${padRight(`[${cli}]`, 10)}${padRight(statusStr, 10 + statusColor.length + c.reset.length)}${bc}│${c.reset}\n`;
         }
 
-        // Offline agents from config
         for (const a of this.config.agents) {
             if (!onlineNames.has(a.name)) {
-                out += `${bc}│${c.reset}  ${c.dim}○ ${padRight(a.name, 11)}${padRight(a.role, 24)}${padRight(`[${a.cli}]`, 10)}${'offline'}${c.reset}${padRight('', Math.max(0, inner - 52 - 6))}  ${bc}│${c.reset}\n`;
+                out += `${bc}│${c.reset}  ${c.dim}○ ${padRight(a.name, 11)}${padRight(a.role, 24)}${padRight(`[${a.cli}]`, 10)}offline${c.reset}${padRight('', Math.max(0, inner - 52 - 6))}  ${bc}│${c.reset}\n`;
             }
         }
 
@@ -183,15 +187,12 @@ export class DashboardScreen {
         out += `${bc}│${c.reset}${padRight('', inner)}${bc}│${c.reset}\n`;
 
         if (this.updates.length === 0) {
-            out += `${bc}│${c.reset}  ${c.dim}No updates yet. Agents can use post_update() to share progress.${c.reset}${padRight('', Math.max(0, inner - 65))}${bc}│${c.reset}\n`;
+            out += `${bc}│${c.reset}  ${c.dim}No updates yet — agents use post_update() to share progress${c.reset}${padRight('', Math.max(0, inner - 62))}${bc}│${c.reset}\n`;
         } else {
-            const recent = this.updates.slice(-6);
-            for (const u of recent) {
+            for (const u of this.updates.slice(-6)) {
                 const time = new Date(u.timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
                 const maxMsg = inner - 22;
-                const msg = stripAnsi(u.message).length > maxMsg
-                    ? u.message.substring(0, maxMsg - 3) + '...'
-                    : u.message;
+                const msg = stripAnsi(u.message).length > maxMsg ? u.message.substring(0, maxMsg - 3) + '...' : u.message;
                 const fromPadded = padRight(u.from, 8);
                 const line = `  ${c.gray}${time}${c.reset}  ${c.bold}${fromPadded}${c.reset} ${msg}`;
                 out += `${bc}│${c.reset}${padRight(line, inner + (line.length - stripAnsi(line).length))}${bc}│${c.reset}\n`;
@@ -209,7 +210,7 @@ export class DashboardScreen {
             if (existsSync(sharedDir)) {
                 const files = readdirSync(sharedDir);
                 if (files.length === 0) {
-                    out += `${bc}│${c.reset}  ${c.dim}No shared files. Agents can use share_file() to share documents.${c.reset}${padRight('', Math.max(0, inner - 66))}${bc}│${c.reset}\n`;
+                    out += `${bc}│${c.reset}  ${c.dim}No shared files — agents use share_file() to share documents${c.reset}${padRight('', Math.max(0, inner - 63))}${bc}│${c.reset}\n`;
                 } else {
                     for (const f of files.slice(0, 6)) {
                         const stat = statSync(join(sharedDir, f));
@@ -218,11 +219,11 @@ export class DashboardScreen {
                         out += `${bc}│${c.reset}  ${c.green}📄${c.reset} ${padRight(f, 30)}${c.dim}${padRight(size, 10)}${modified}${c.reset}${padRight('', Math.max(0, inner - 55))}${bc}│${c.reset}\n`;
                     }
                     if (files.length > 6) {
-                        out += `${bc}│${c.reset}  ${c.dim}...and ${files.length - 6} more files${c.reset}${padRight('', Math.max(0, inner - 25))}${bc}│${c.reset}\n`;
+                        out += `${bc}│${c.reset}  ${c.dim}...and ${files.length - 6} more${c.reset}${padRight('', Math.max(0, inner - 22))}${bc}│${c.reset}\n`;
                     }
                 }
             } else {
-                out += `${bc}│${c.reset}  ${c.dim}No shared files. Agents can use share_file() to share documents.${c.reset}${padRight('', Math.max(0, inner - 66))}${bc}│${c.reset}\n`;
+                out += `${bc}│${c.reset}  ${c.dim}No shared files — agents use share_file() to share documents${c.reset}${padRight('', Math.max(0, inner - 63))}${bc}│${c.reset}\n`;
             }
         } catch {
             out += `${bc}│${c.reset}  ${c.dim}Unable to read shared directory${c.reset}${padRight('', Math.max(0, inner - 33))}${bc}│${c.reset}\n`;
@@ -232,7 +233,7 @@ export class DashboardScreen {
         out += `${bc}├${'─'.repeat(inner)}┤${c.reset}\n`;
 
         // ═══ Footer ═══
-        out += `${bc}│${c.reset}  ${c.dim}[r]${c.reset} refresh   ${c.dim}[b]${c.reset} back to menu   ${c.dim}[q]${c.reset} quit${padRight('', Math.max(0, inner - 38))}${bc}│${c.reset}\n`;
+        out += `${bc}│${c.reset}  ${c.dim}[r]${c.reset} refresh   ${c.dim}[q]${c.reset} back to menu${padRight('', Math.max(0, inner - 30))}${bc}│${c.reset}\n`;
         out += `${bc}╰${'─'.repeat(inner)}╯${c.reset}\n`;
 
         process.stdout.write(out);
@@ -246,8 +247,12 @@ export class DashboardScreen {
     }
 
     private cleanup(): void {
+        this.destroyed = true; // Stop all reconnect timers
         if (this.interval) { clearInterval(this.interval); this.interval = null; }
-        if (this.ws) { this.ws.close(); this.ws = null; }
+        if (this.ws) {
+            try { this.ws.close(); } catch { }
+            this.ws = null;
+        }
         process.stdout.write(cursor.show + screen.clear);
     }
 }
