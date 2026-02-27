@@ -11,6 +11,8 @@ import type {
     RelayQuestionMessage,
     RelayResponseMessage,
     RelayTaskMessage,
+    RelayReplyMessage,
+    RelayReplyDeliveredMessage,
     RelayStartMessage,
     RelayDoneMessage,
     TaskPriority,
@@ -33,13 +35,9 @@ export class RelayEngine {
         this.verbose = verbose;
     }
 
-    /**
-     * Handle a relay:ask message — route question to target agent.
-     */
     handleAsk(sourceWs: WebSocket, msg: RelayAskMessage): void {
         const target = this.registry.getAgentByName(msg.toAgent);
         if (!target) {
-            // Send error back to source
             sourceWs.send(JSON.stringify({
                 type: 'relay:response',
                 requestId: msg.requestId,
@@ -49,36 +47,21 @@ export class RelayEngine {
             return;
         }
 
-        // Track the pending request
         this.pendingRequests.set(msg.requestId, {
-            sourceWs,
-            fromAgent: msg.fromAgent,
-            toAgent: msg.toAgent,
-            timestamp: Date.now(),
+            sourceWs, fromAgent: msg.fromAgent, toAgent: msg.toAgent, timestamp: Date.now(),
         });
 
-        // Broadcast relay:start event (for VibeHQ animations)
         this.registry.broadcastToAll({
-            type: 'relay:start',
-            fromAgent: msg.fromAgent,
-            toAgent: msg.toAgent,
-            requestId: msg.requestId,
+            type: 'relay:start', fromAgent: msg.fromAgent, toAgent: msg.toAgent, requestId: msg.requestId,
         } satisfies RelayStartMessage);
 
-        // Forward the question to target agent
         target.ws.send(JSON.stringify({
-            type: 'relay:question',
-            requestId: msg.requestId,
-            fromAgent: msg.fromAgent,
-            question: msg.question,
+            type: 'relay:question', requestId: msg.requestId, fromAgent: msg.fromAgent, question: msg.question,
         } satisfies RelayQuestionMessage));
 
         this.log(`Ask: ${msg.fromAgent} → ${msg.toAgent} [${msg.requestId}]`);
     }
 
-    /**
-     * Handle a relay:answer message — route answer back to source agent.
-     */
     handleAnswer(msg: RelayAnswerMessage): void {
         const pending = this.pendingRequests.get(msg.requestId);
         if (!pending) {
@@ -88,68 +71,62 @@ export class RelayEngine {
 
         this.pendingRequests.delete(msg.requestId);
 
-        // Send response back to the source agent
         if (pending.sourceWs.readyState === WebSocket.OPEN) {
             pending.sourceWs.send(JSON.stringify({
-                type: 'relay:response',
-                requestId: msg.requestId,
-                fromAgent: pending.toAgent,
-                answer: msg.answer,
+                type: 'relay:response', requestId: msg.requestId, fromAgent: pending.toAgent, answer: msg.answer,
             } satisfies RelayResponseMessage));
         }
 
-        // Broadcast relay:done event
         this.registry.broadcastToAll({
-            type: 'relay:done',
-            fromAgent: pending.fromAgent,
-            toAgent: pending.toAgent,
-            requestId: msg.requestId,
+            type: 'relay:done', fromAgent: pending.fromAgent, toAgent: pending.toAgent, requestId: msg.requestId,
         } satisfies RelayDoneMessage);
 
         this.log(`Answer: ${pending.toAgent} → ${pending.fromAgent} [${msg.requestId}]`);
     }
 
-    /**
-     * Handle a relay:assign message — fire-and-forget task delivery.
-     */
     handleAssign(sourceWs: WebSocket, msg: RelayAssignMessage): void {
         const target = this.registry.getAgentByName(msg.toAgent);
         if (!target) {
             sourceWs.send(JSON.stringify({
-                type: 'relay:response',
-                requestId: msg.requestId,
-                fromAgent: msg.toAgent,
+                type: 'relay:response', requestId: msg.requestId, fromAgent: msg.toAgent,
                 answer: `Error: Agent "${msg.toAgent}" is not connected.`,
             } satisfies RelayResponseMessage));
             return;
         }
 
-        // Broadcast relay:start event
         this.registry.broadcastToAll({
-            type: 'relay:start',
-            fromAgent: msg.fromAgent,
-            toAgent: msg.toAgent,
-            requestId: msg.requestId,
+            type: 'relay:start', fromAgent: msg.fromAgent, toAgent: msg.toAgent, requestId: msg.requestId,
         } satisfies RelayStartMessage);
 
-        // Forward the task to target agent
         target.ws.send(JSON.stringify({
-            type: 'relay:task',
-            requestId: msg.requestId,
-            fromAgent: msg.fromAgent,
-            task: msg.task,
-            priority: msg.priority ?? 'medium',
+            type: 'relay:task', requestId: msg.requestId, fromAgent: msg.fromAgent,
+            task: msg.task, priority: msg.priority ?? 'medium',
         } satisfies RelayTaskMessage));
 
-        // Immediately broadcast relay:done (fire-and-forget)
         this.registry.broadcastToAll({
-            type: 'relay:done',
-            fromAgent: msg.fromAgent,
-            toAgent: msg.toAgent,
-            requestId: msg.requestId,
+            type: 'relay:done', fromAgent: msg.fromAgent, toAgent: msg.toAgent, requestId: msg.requestId,
         } satisfies RelayDoneMessage);
 
         this.log(`Assign: ${msg.fromAgent} → ${msg.toAgent} [${msg.requestId}] (priority: ${msg.priority ?? 'medium'})`);
+    }
+
+    /**
+     * Handle relay:reply — async reply from one agent to another.
+     */
+    handleReply(sourceWs: WebSocket, msg: RelayReplyMessage, fromAgentName: string): void {
+        const target = this.registry.getAgentByName(msg.toAgent);
+        if (!target) {
+            this.log(`Reply failed: Agent "${msg.toAgent}" not connected`);
+            return;
+        }
+
+        target.ws.send(JSON.stringify({
+            type: 'relay:reply:delivered',
+            fromAgent: fromAgentName,
+            message: msg.message,
+        } satisfies RelayReplyDeliveredMessage));
+
+        this.log(`Reply: ${fromAgentName} → ${msg.toAgent}`);
     }
 
     private log(message: string): void {
@@ -158,3 +135,4 @@ export class RelayEngine {
         }
     }
 }
+

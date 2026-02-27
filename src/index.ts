@@ -13,7 +13,6 @@ export { HubClient } from './mcp/hub-client.js';
 
 // Spawner
 export { AgentSpawner } from './spawner/spawner.js';
-export { ResponseParser } from './spawner/response-parser.js';
 
 // Shared Types
 export type {
@@ -32,6 +31,8 @@ export type {
     RelayResponseMessage,
     RelayAssignMessage,
     RelayTaskMessage,
+    RelayReplyMessage,
+    RelayReplyDeliveredMessage,
     RelayStartMessage,
     RelayDoneMessage,
     ViewerConnectMessage,

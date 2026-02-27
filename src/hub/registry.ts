@@ -134,6 +134,13 @@ export class AgentRegistry {
     }
 
     /**
+     * Get agent name by WebSocket connection.
+     */
+    getAgentNameByWs(ws: WebSocket): string | undefined {
+        return this.agents.get(ws)?.name;
+    }
+
+    /**
      * Get all registered agents (without WS refs).
      */
     getAllAgents(): Agent[] {

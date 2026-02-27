@@ -1,20 +1,19 @@
 // ============================================================
 // Agent Spawner — wraps a CLI process (PTY) + Hub connection
-// Zero logs to avoid corrupting the terminal.
+// No stdout parsing. Inject-only via stdin.
 // ============================================================
 
 import * as pty from 'node-pty';
 import { execSync } from 'child_process';
 import WebSocket from 'ws';
-import { ResponseParser } from './response-parser.js';
 import type {
     AgentRegisterMessage,
     AgentRegisteredMessage,
     AgentStatusBroadcastMessage,
     AgentDisconnectedMessage,
     RelayQuestionMessage,
-    RelayAnswerMessage,
     RelayTaskMessage,
+    RelayReplyDeliveredMessage,
     Agent,
 } from '../shared/types.js';
 
@@ -38,20 +37,17 @@ export interface SpawnerOptions {
     hubUrl: string;
     command: string;
     args: string[];
-    askTimeout?: number;
 }
 
 export class AgentSpawner {
     private ptyProcess: pty.IPty | null = null;
     private ws: WebSocket | null = null;
-    private parser: ResponseParser;
     private options: SpawnerOptions;
     private agentId: string | null = null;
     private teammates: Map<string, Agent> = new Map();
 
     constructor(options: SpawnerOptions) {
         this.options = options;
-        this.parser = new ResponseParser(options.askTimeout ?? 120000);
     }
 
     async start(): Promise<void> {
@@ -73,7 +69,6 @@ export class AgentSpawner {
             env: process.env as { [key: string]: string },
         });
 
-        // Handle terminal resize
         process.stdout.on('resize', () => {
             this.ptyProcess?.resize(
                 process.stdout.columns || 80,
@@ -81,23 +76,19 @@ export class AgentSpawner {
             );
         });
 
-        // Raw mode for direct keypress forwarding
         if (process.stdin.isTTY) {
             process.stdin.setRawMode(true);
         }
         process.stdin.resume();
 
-        // User stdin → PTY (direct, no processing)
+        // User stdin → PTY (direct passthrough)
         process.stdin.on('data', (data) => {
             this.ptyProcess?.write(data.toString());
         });
 
-        // PTY output → response parser → user stdout
+        // PTY output → user stdout (direct passthrough, no parsing)
         this.ptyProcess.onData((data: string) => {
-            const output = this.parser.feed(data);
-            if (output) {
-                process.stdout.write(output);
-            }
+            process.stdout.write(data);
         });
 
         this.ptyProcess.onExit(({ exitCode }) => {
@@ -139,6 +130,9 @@ export class AgentSpawner {
                     case 'relay:task':
                         this.handleTask(msg);
                         break;
+                    case 'relay:reply:delivered':
+                        this.handleReplyDelivered(msg);
+                        break;
                 }
             });
 
@@ -157,40 +151,18 @@ export class AgentSpawner {
      */
     private writeToPty(text: string): void {
         this.ptyProcess?.write(text);
-        // Delay before pressing Enter — let the TUI process the text first
         setTimeout(() => {
             this.ptyProcess?.write('\r');
         }, 200);
     }
 
     /**
-     * Inject a teammate question into the CLI's PTY.
+     * Inject a teammate's question into the CLI's PTY.
+     * The agent should use reply_to_team MCP tool to respond.
      */
-    private async handleQuestion(msg: RelayQuestionMessage): Promise<void> {
-        this.sendToHub({ type: 'agent:status', status: 'working' });
-
-        const responsePromise = this.parser.expectResponse(msg.requestId);
-
-        // Inject question as a single line
-        const prompt = `[Team question from ${msg.fromAgent}]: ${msg.question} — Reply between [TEAM_RESPONSE_START] and [TEAM_RESPONSE_END] markers.`;
+    private handleQuestion(msg: RelayQuestionMessage): void {
+        const prompt = `[Team question from ${msg.fromAgent}]: ${msg.question} — Use the reply_to_team tool to respond to ${msg.fromAgent}.`;
         this.writeToPty(prompt);
-
-        try {
-            const response = await responsePromise;
-            this.sendToHub({
-                type: 'relay:answer',
-                requestId: msg.requestId,
-                answer: response,
-            } satisfies RelayAnswerMessage);
-        } catch {
-            this.sendToHub({
-                type: 'relay:answer',
-                requestId: msg.requestId,
-                answer: `[Error] Agent "${this.options.name}" did not respond in time.`,
-            } satisfies RelayAnswerMessage);
-        }
-
-        this.sendToHub({ type: 'agent:status', status: 'idle' });
     }
 
     /**
@@ -201,7 +173,15 @@ export class AgentSpawner {
         this.writeToPty(prompt);
     }
 
-    // --- Hub handlers (no logs) ---
+    /**
+     * Inject a teammate's reply into the CLI's PTY.
+     */
+    private handleReplyDelivered(msg: RelayReplyDeliveredMessage): void {
+        const prompt = `[Reply from ${msg.fromAgent}]: ${msg.message}`;
+        this.writeToPty(prompt);
+    }
+
+    // --- Hub handlers ---
 
     private handleRegistered(msg: AgentRegisteredMessage): void {
         this.agentId = msg.agentId;
@@ -234,7 +214,6 @@ export class AgentSpawner {
     }
 
     private cleanup(): void {
-        this.parser.destroy();
         this.ws?.close();
         if (process.stdin.isTTY) {
             process.stdin.setRawMode(false);

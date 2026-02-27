@@ -49,7 +49,7 @@ export interface AgentDisconnectedMessage {
     name: string;
 }
 
-// --- WS Messages: Relay Ask (synchronous) ---
+// --- WS Messages: Relay Ask (async) ---
 
 export interface RelayAskMessage {
     type: 'relay:ask';
@@ -100,6 +100,20 @@ export interface RelayTaskMessage {
     priority: TaskPriority;
 }
 
+// --- WS Messages: Relay Reply (async response) ---
+
+export interface RelayReplyMessage {
+    type: 'relay:reply';
+    toAgent: string;
+    message: string;
+}
+
+export interface RelayReplyDeliveredMessage {
+    type: 'relay:reply:delivered';
+    fromAgent: string;
+    message: string;
+}
+
 // --- WS Messages: Relay Events (VibeHQ integration) ---
 
 export interface RelayStartMessage {
@@ -136,6 +150,8 @@ export type HubMessage =
     | RelayResponseMessage
     | RelayAssignMessage
     | RelayTaskMessage
+    | RelayReplyMessage
+    | RelayReplyDeliveredMessage
     | RelayStartMessage
     | RelayDoneMessage
     | ViewerConnectMessage;

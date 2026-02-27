@@ -17,6 +17,8 @@ import type {
     RelayResponseMessage,
     RelayAssignMessage,
     RelayTaskMessage,
+    RelayReplyMessage,
+    RelayReplyDeliveredMessage,
     AgentStatus,
     TaskPriority,
 } from '../shared/types.js';
@@ -96,6 +98,10 @@ export class HubClient extends EventEmitter {
                         case 'relay:task':
                             this.emit('relay:task', msg as RelayTaskMessage);
                             break;
+
+                        case 'relay:reply:delivered':
+                            this.emit('relay:reply', msg as RelayReplyDeliveredMessage);
+                            break;
                     }
                 });
 
@@ -126,31 +132,20 @@ export class HubClient extends EventEmitter {
     }
 
     /**
-     * Ask a teammate a question (synchronous, waits for response).
+     * Ask a teammate a question (fire-and-forget, reply comes back via relay:reply:delivered).
      */
-    async ask(teammateName: string, question: string): Promise<{ from: string; response: string }> {
+    ask(teammateName: string, question: string): string {
         const requestId = randomUUID();
 
-        return new Promise((resolve, reject) => {
-            const timer = setTimeout(() => {
-                this.pendingAsks.delete(requestId);
-                reject(new Error(`Timeout: No response from "${teammateName}" within ${this.askTimeout / 1000}s`));
-            }, this.askTimeout);
+        this.send({
+            type: 'relay:ask',
+            requestId,
+            fromAgent: this.agentName,
+            toAgent: teammateName,
+            question,
+        } satisfies RelayAskMessage);
 
-            this.pendingAsks.set(requestId, {
-                resolve: (answer) => {
-                    resolve({ from: teammateName, response: answer });
-                }, reject, timer
-            });
-
-            this.send({
-                type: 'relay:ask',
-                requestId,
-                fromAgent: this.agentName,
-                toAgent: teammateName,
-                question,
-            } satisfies RelayAskMessage);
-        });
+        return requestId;
     }
 
     /**
@@ -169,6 +164,17 @@ export class HubClient extends EventEmitter {
         } satisfies RelayAssignMessage);
 
         return { taskId: requestId };
+    }
+
+    /**
+     * Send an async reply to a teammate.
+     */
+    reply(teammateName: string, message: string): void {
+        this.send({
+            type: 'relay:reply',
+            toAgent: teammateName,
+            message,
+        } satisfies RelayReplyMessage);
     }
 
     /**

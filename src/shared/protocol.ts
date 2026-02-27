@@ -10,11 +10,15 @@ export const MessageTypes = {
     AGENT_STATUS_BROADCAST: 'agent:status:broadcast',
     AGENT_DISCONNECTED: 'agent:disconnected',
 
-    // Relay: ask (synchronous)
+    // Relay: ask (async)
     RELAY_ASK: 'relay:ask',
     RELAY_QUESTION: 'relay:question',
     RELAY_ANSWER: 'relay:answer',
     RELAY_RESPONSE: 'relay:response',
+
+    // Relay: reply (async response from agent)
+    RELAY_REPLY: 'relay:reply',
+    RELAY_REPLY_DELIVERED: 'relay:reply:delivered',
 
     // Relay: assign (async)
     RELAY_ASSIGN: 'relay:assign',

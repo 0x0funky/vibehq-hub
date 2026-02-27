@@ -59,6 +59,11 @@ export function startHub(options: HubOptions): WebSocketServer {
                     relay.handleAnswer(msg);
                     break;
 
+                case 'relay:reply':
+                    const agentName = registry.getAgentNameByWs(ws);
+                    if (agentName) relay.handleReply(ws, msg, agentName);
+                    break;
+
                 case 'agent:status':
                     registry.updateStatus(ws, msg.status);
                     break;
