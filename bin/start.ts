@@ -17,14 +17,29 @@ import { prompt } from '../src/tui/input.js';
 
 // --- Running hub tracker ---
 let runningHub: { wss: WebSocketServer; port: number } | null = null;
+let spawnedPids: number[] = [];
 
 async function stopHub(): Promise<void> {
     if (!runningHub) return;
     await new Promise<void>((resolve) => {
         runningHub!.wss.close(() => resolve());
-        setTimeout(resolve, 1000); // Timeout fallback
+        setTimeout(resolve, 1000);
     });
     runningHub = null;
+}
+
+function stopAgents(): void {
+    if (spawnedPids.length === 0) return;
+    for (const pid of spawnedPids) {
+        try {
+            if (process.platform === 'win32') {
+                exec(`taskkill /F /T /PID ${pid}`);
+            } else {
+                process.kill(pid, 'SIGTERM');
+            }
+        } catch { }
+    }
+    spawnedPids = [];
 }
 
 // --- Types ---
@@ -128,7 +143,7 @@ async function autoFindPort(startPort: number): Promise<number | null> {
     for (let port = startPort; port < startPort + 100; port++) {
         const status = await tryPort(port);
         if (status === 'available') return port;
-        if (status === 'inuse') return null; // Already in use by our hub or another process
+        // 'inuse' or 'restricted' → keep scanning
     }
     return null;
 }
@@ -150,23 +165,19 @@ async function selectTeam(teams: TeamConfig[]): Promise<TeamConfig> {
     return teams.find(t => t.name === choice)!;
 }
 
-// --- Spawn agents ---
+// --- Spawn agents (returns PIDs of spawned processes) ---
 function spawnAgents(team: TeamConfig): void {
     const hubUrl = `ws://localhost:${team.hub.port}`;
+    spawnedPids = []; // Reset for this team session
 
     for (const agent of team.agents) {
         const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}" -- ${agent.cli}`;
 
         if (process.platform === 'win32') {
-            // Use PowerShell Start-Process for reliable quoting
-            const cwdEscaped = agent.cwd.replace(/\\/g, '\\\\');
-            const psCmd = `Start-Process wt -ArgumentList "-w new --title '${agent.name}' -d '${agent.cwd}' cmd /k 'chcp 65001 >nul && ${spawnCmd}'"`;
-            exec(`powershell -Command "${psCmd}"`, (err) => {
-                if (err) {
-                    // Fallback: direct wt call
-                    exec(`wt -w new --title "${agent.name}" -d "${agent.cwd}" cmd /k "chcp 65001 >nul && ${spawnCmd}"`);
-                }
-            });
+            // Use direct wt call — track the PID
+            const wtCmd = `wt -w new --title "${agent.name}" -d "${agent.cwd}" cmd /k "chcp 65001 >nul && ${spawnCmd}"`;
+            const child = exec(wtCmd);
+            if (child.pid) spawnedPids.push(child.pid);
         } else {
             exec(`osascript -e 'tell app "Terminal" to do script "cd \'${agent.cwd}\' && ${spawnCmd}"'`);
         }
@@ -248,27 +259,37 @@ async function startTeam(configPath: string): Promise<void> {
 
 }
 
-// --- Run dashboard (returns when [q] pressed) ---
+// --- Run dashboard (returns when [q] pressed, kills agents) ---
 async function runDashboard(dashConfig: { team: string; hub: { port: number }; agents: AgentConfig[] }): Promise<void> {
     const dashboard = new DashboardScreen(dashConfig);
     await dashboard.start();
+    // [q] pressed — kill all spawned terminal windows
+    stopAgents();
 }
 
 // --- Dashboard-only flow (without starting hub) ---
 async function dashboardOnly(configPath: string): Promise<void> {
-    const teams = loadTeams(configPath);
     let dashConfig: { team: string; hub: { port: number }; agents: AgentConfig[] };
 
-    if (teams && teams.length > 0) {
-        const team = await selectTeam(teams);
-        dashConfig = { team: team.name, hub: team.hub, agents: team.agents };
+    // If a hub is already running, use its actual port
+    if (runningHub) {
+        const teams = loadTeams(configPath);
+        const agents = teams?.flatMap(t => t.agents) ?? [];
+        const teamName = teams?.[0]?.name ?? 'default';
+        dashConfig = { team: teamName, hub: { port: runningHub.port }, agents };
     } else {
-        const portStr = await prompt('Hub port', '3001');
-        dashConfig = {
-            team: 'default',
-            hub: { port: parseInt(portStr, 10) || 3001 },
-            agents: [],
-        };
+        const teams = loadTeams(configPath);
+        if (teams && teams.length > 0) {
+            const team = await selectTeam(teams);
+            dashConfig = { team: team.name, hub: team.hub, agents: team.agents };
+        } else {
+            const portStr = await prompt('Hub port', '3001');
+            dashConfig = {
+                team: 'default',
+                hub: { port: parseInt(portStr, 10) || 3001 },
+                agents: [],
+            };
+        }
     }
 
     await runDashboard(dashConfig);
