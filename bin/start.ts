@@ -111,18 +111,26 @@ function loadTeams(configPath: string): TeamConfig[] | null {
     }
 }
 
-// --- Check if port is available ---
-type PortStatus = 'available' | 'inuse' | 'restricted';
-async function checkPort(port: number): Promise<PortStatus> {
+// --- Find available port (auto-scan, skips restricted/busy ports) ---
+async function tryPort(port: number): Promise<'available' | 'inuse' | 'restricted'> {
     return new Promise((resolve) => {
         const server = createServer();
         server.once('error', (err: NodeJS.ErrnoException) => {
             if (err.code === 'EADDRINUSE') resolve('inuse');
-            else resolve('restricted'); // EACCES or other
+            else resolve('restricted');
         });
         server.once('listening', () => { server.close(); resolve('available'); });
         server.listen(port, '127.0.0.1');
     });
+}
+
+async function autoFindPort(startPort: number): Promise<number | null> {
+    for (let port = startPort; port < startPort + 100; port++) {
+        const status = await tryPort(port);
+        if (status === 'available') return port;
+        if (status === 'inuse') return null; // Already in use by our hub or another process
+    }
+    return null;
 }
 
 // --- Select team ---
@@ -199,34 +207,33 @@ async function startTeam(configPath: string): Promise<void> {
         await new Promise(r => setTimeout(r, 500));
     }
 
-    // Check port availability (only for fresh starts)
-    const portStatus = await checkPort(team.hub.port);
-    if (portStatus !== 'available') {
-        process.stdout.write(screen.clear);
-        if (portStatus === 'inuse') {
-            console.log(`\n  ${c.yellow}⚠${c.reset} Port ${c.bold}${team.hub.port}${c.reset} is already in use.`);
-            console.log(`  ${c.dim}Another process is using this port. Change it in Settings or use Dashboard to connect.${c.reset}\n`);
-        } else {
-            console.log(`\n  ${c.red}✗${c.reset} Port ${c.bold}${team.hub.port}${c.reset} is restricted by Windows.`);
-            console.log(`  ${c.dim}Try a different port (e.g. 4001, 5001, 8080).${c.reset}`);
-            console.log(`  ${c.dim}Check: netsh int ipv4 show excludedportrange tcp${c.reset}\n`);
-        }
+    // Auto-find available port (scans upward, skips Windows-restricted ports)
+    process.stdout.write(screen.clear);
+    console.log(`\n  ${c.bold}${c.brightCyan}⚡ Starting team "${team.name}"${c.reset}\n`);
+    console.log(`  ${c.dim}Scanning for available port from ${team.hub.port}...${c.reset}`);
+
+    const actualPort = await autoFindPort(team.hub.port);
+    if (actualPort === null) {
+        console.log(`\n  ${c.yellow}⚠${c.reset} No available port found near ${team.hub.port}.`);
+        console.log(`  ${c.dim}A hub may already be running. Use "Dashboard" to connect.${c.reset}\n`);
         await new Promise(r => setTimeout(r, 400));
         return;
     }
 
-    process.stdout.write(screen.clear);
-    console.log(`\n  ${c.bold}${c.brightCyan}⚡ Starting team "${team.name}"${c.reset}\n`);
+    if (actualPort !== team.hub.port) {
+        console.log(`  ${c.yellow}→${c.reset} Port ${team.hub.port} restricted — using ${c.bold}${actualPort}${c.reset} instead`);
+    }
 
-    // Start Hub
-    console.log(`  ${c.green}✓${c.reset} Hub started on port ${team.hub.port}`);
-    const wss = startHub({ port: team.hub.port, verbose: false });
-    runningHub = { wss, port: team.hub.port };
+    // Start Hub on the found port
+    console.log(`  ${c.green}✓${c.reset} Hub started on port ${c.bold}${actualPort}${c.reset}`);
+    const wss = startHub({ port: actualPort, verbose: false });
+    runningHub = { wss, port: actualPort };
 
-    // Spawn agents
+    // Spawn agents (pass actual hub port they should connect to)
+    const teamWithActualPort = { ...team, hub: { port: actualPort } };
     console.log(`  ${c.bold}Spawning ${team.agents.length} agent${team.agents.length !== 1 ? 's' : ''}...${c.reset}\n`);
     await new Promise(r => setTimeout(r, 800));
-    spawnAgents(team);
+    spawnAgents(teamWithActualPort);
 
     // Launch dashboard
     console.log(`\n  ${c.dim}Opening dashboard in 3s... Press [q] to return to menu${c.reset}\n`);
@@ -234,10 +241,11 @@ async function startTeam(configPath: string): Promise<void> {
 
     await runDashboard({
         team: team.name,
-        hub: team.hub,
+        hub: { port: actualPort },
         agents: team.agents,
     });
-    // Hub stays running for reconnection if user starts same team again
+    // Hub stays running — reused if same team started again
+
 }
 
 // --- Run dashboard (returns when [q] pressed) ---

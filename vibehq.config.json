@@ -35,7 +35,7 @@
         {
             "name": "Vibehq",
             "hub": {
-                "port": 3001
+                "port": 4001
             },
             "agents": [
                 {
