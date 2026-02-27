@@ -8,7 +8,7 @@ import { startHub } from '../src/hub/server.js';
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { spawn } from 'child_process';
+import { exec } from 'child_process';
 import WebSocket from 'ws';
 import type { Agent, TeamUpdate } from '../src/shared/types.js';
 
@@ -114,25 +114,17 @@ function spawnAgents(config: VibehqConfig): void {
         const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team}" --hub "${hubUrl}" -- ${agent.cli}`;
 
         if (process.platform === 'win32') {
-            // Try Windows Terminal first, fall back to cmd
-            try {
-                spawn('wt', [
-                    '-w', '0',
-                    'new-tab',
-                    '--title', `${agent.name} (${agent.cli})`,
-                    '-d', agent.cwd,
-                    'cmd', '/k', spawnCmd,
-                ], { shell: true, detached: true, stdio: 'ignore' });
-            } catch {
-                spawn('cmd', ['/c', 'start', 'cmd', '/k', `cd /d "${agent.cwd}" && ${spawnCmd}`], {
-                    shell: true, detached: true, stdio: 'ignore',
-                });
-            }
-        } else {
-            // macOS / Linux — open new terminal
-            spawn('bash', ['-c', `cd "${agent.cwd}" && ${spawnCmd}`], {
-                detached: true, stdio: 'ignore',
+            // Use wt.exe with a single escaped command string
+            const wtCmd = `wt -w 0 new-tab --title "${agent.name}" -d "${agent.cwd}" cmd /k ${spawnCmd}`;
+            exec(wtCmd, (err) => {
+                if (err) {
+                    // Fallback: open a new cmd window
+                    exec(`start "${agent.name}" cmd /k "cd /d "${agent.cwd}" && ${spawnCmd}"`);
+                }
             });
+        } else {
+            // macOS / Linux
+            exec(`bash -c 'cd "${agent.cwd}" && ${spawnCmd}'`);
         }
 
         console.log(`  ${GREEN}↗${RESET} ${agent.name} (${agent.cli}) → ${GRAY}${agent.cwd}${RESET}`);
