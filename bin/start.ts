@@ -1,30 +1,15 @@
 // ============================================================
-// CLI Entry: vibehq (launcher + dashboard)
-// Reads vibehq.config.json, starts hub, opens terminal tabs,
-// then shows a live dashboard.
+// CLI Entry: vibehq — Interactive TUI
 // ============================================================
 
 import { startHub } from '../src/hub/server.js';
-import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { readFileSync, existsSync } from 'fs';
 import { exec } from 'child_process';
-import WebSocket from 'ws';
-import type { Agent, TeamUpdate } from '../src/shared/types.js';
-
-// --- ANSI helpers ---
-const ESC = '\x1b';
-const CLEAR = `${ESC}[2J${ESC}[H`;
-const BOLD = `${ESC}[1m`;
-const DIM = `${ESC}[2m`;
-const RESET = `${ESC}[0m`;
-const GREEN = `${ESC}[32m`;
-const YELLOW = `${ESC}[33m`;
-const CYAN = `${ESC}[36m`;
-const MAGENTA = `${ESC}[35m`;
-const WHITE = `${ESC}[37m`;
-const GRAY = `${ESC}[90m`;
-const BG_DARK = `${ESC}[48;5;236m`;
+import { c, screen, cursor } from '../src/tui/renderer.js';
+import { welcomeScreen } from '../src/tui/screens/welcome.js';
+import { createTeamScreen } from '../src/tui/screens/create-team.js';
+import { DashboardScreen } from '../src/tui/screens/dashboard.js';
+import { prompt } from '../src/tui/input.js';
 
 // --- Types ---
 interface AgentConfig {
@@ -40,25 +25,27 @@ interface VibehqConfig {
     agents: AgentConfig[];
 }
 
-// --- Parse args ---
-function parseArgs(): { configPath: string } {
+// --- Parse top-level args ---
+function getCommand(): { command: string; configPath: string } {
     const args = process.argv.slice(2);
-    let configPath = 'vibehq.config.json';
     let command = '';
+    let configPath = 'vibehq.config.json';
 
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '--config' || args[i] === '-c') {
             configPath = args[++i];
         } else if (args[i] === '-h' || args[i] === '--help') {
             console.log(`
-${BOLD}vibehq${RESET} — Team Launcher + Dashboard
+${c.bold}vibehq${c.reset} — Multi-Agent Team Manager
 
 Usage:
-  vibehq start [--config <path>]    Start hub + agents + dashboard
-  vibehq init                       Create example config file
+  vibehq                          Interactive mode
+  vibehq start [--config <path>]  Start team from config
+  vibehq init                     Create example config
+  vibehq dashboard                Connect to running hub
 
 Options:
-  -c, --config <path>    Config file path (default: vibehq.config.json)
+  -c, --config <path>    Config file (default: vibehq.config.json)
   -h, --help             Show help
 `);
             process.exit(0);
@@ -67,45 +54,20 @@ Options:
         }
     }
 
-    if (command === 'init') {
-        createExampleConfig();
-        process.exit(0);
-    }
-
-    return { configPath };
-}
-
-function createExampleConfig(): void {
-    const example: VibehqConfig = {
-        team: 'my-team',
-        hub: { port: 3001 },
-        agents: [
-            { name: 'Alex', role: 'Backend Engineer', cli: 'claude', cwd: 'D:\\my-project\\backend' },
-            { name: 'Jordan', role: 'Frontend Engineer', cli: 'codex', cwd: 'D:\\my-project\\frontend' },
-            { name: 'Bob', role: 'AI Engineer', cli: 'gemini', cwd: 'D:\\my-project\\ai' },
-        ],
-    };
-    const fs = require('fs');
-    fs.writeFileSync('vibehq.config.json', JSON.stringify(example, null, 2) + '\n');
-    console.log(`${GREEN}✓${RESET} Created vibehq.config.json — edit it with your agent settings.`);
+    return { command, configPath };
 }
 
 // --- Load config ---
-function loadConfig(configPath: string): VibehqConfig {
-    if (!existsSync(configPath)) {
-        console.error(`Config file not found: ${configPath}`);
-        console.error(`Run "vibehq init" to create one.`);
-        process.exit(1);
-    }
+function loadConfig(configPath: string): VibehqConfig | null {
+    if (!existsSync(configPath)) return null;
     try {
         return JSON.parse(readFileSync(configPath, 'utf-8'));
-    } catch (err) {
-        console.error(`Invalid config file: ${(err as Error).message}`);
-        process.exit(1);
+    } catch {
+        return null;
     }
 }
 
-// --- Spawn agents in Windows Terminal tabs ---
+// --- Spawn agents ---
 function spawnAgents(config: VibehqConfig): void {
     const { team, hub, agents } = config;
     const hubUrl = `ws://localhost:${hub.port}`;
@@ -114,239 +76,137 @@ function spawnAgents(config: VibehqConfig): void {
         const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team}" --hub "${hubUrl}" -- ${agent.cli}`;
 
         if (process.platform === 'win32') {
-            // Use wt.exe with a single escaped command string
             const wtCmd = `wt -w new --title "${agent.name}" -d "${agent.cwd}" cmd /k "chcp 65001 >nul && ${spawnCmd}"`;
             exec(wtCmd, (err) => {
                 if (err) {
-                    // Fallback: open a new cmd window
-                    exec(`start "${agent.name}" cmd /k "cd /d "${agent.cwd}" && ${spawnCmd}"`);
+                    exec(`start "${agent.name}" cmd /k "cd /d "${agent.cwd}" && chcp 65001 >nul && ${spawnCmd}"`);
                 }
             });
         } else {
-            // macOS / Linux
-            exec(`bash -c 'cd "${agent.cwd}" && ${spawnCmd}'`);
+            exec(`osascript -e 'tell app "Terminal" to do script "cd \\"${agent.cwd}\\" && ${spawnCmd}"'`, () => {
+                // Fallback for non-macOS
+                exec(`bash -c 'cd "${agent.cwd}" && ${spawnCmd}'`);
+            });
         }
 
-        console.log(`  ${GREEN}↗${RESET} ${agent.name} (${agent.cli}) → ${GRAY}${agent.cwd}${RESET}`);
+        console.log(`  ${c.green}↗${c.reset} ${c.bold}${agent.name}${c.reset} ${c.dim}(${agent.cli})${c.reset} → ${c.gray}${agent.cwd}${c.reset}`);
     }
 }
 
-// --- Dashboard ---
-class Dashboard {
-    private agents: Map<string, Agent> = new Map();
-    private updates: TeamUpdate[] = [];
-    private ws: WebSocket | null = null;
-    private config: VibehqConfig;
-    private interval: ReturnType<typeof setInterval> | null = null;
-
-    constructor(config: VibehqConfig) {
-        this.config = config;
+// --- Start team flow ---
+async function startTeam(configPath: string): Promise<void> {
+    const config = loadConfig(configPath);
+    if (!config) {
+        console.log(`\n  ${c.yellow}⚠${c.reset} Config not found: ${c.bold}${configPath}${c.reset}`);
+        console.log(`  ${c.dim}Run "vibehq create" or "vibehq init" first${c.reset}\n`);
+        return;
     }
 
-    start(): void {
-        const hubUrl = `ws://localhost:${this.config.hub.port}`;
-        this.connectWithRetry(hubUrl);
+    process.stdout.write(screen.clear);
+    console.log(`\n  ${c.bold}${c.brightCyan}⚡ Starting team "${config.team}"${c.reset}\n`);
 
-        // Refresh dashboard every 2 seconds
-        this.interval = setInterval(() => this.render(), 2000);
+    // Start Hub
+    console.log(`  ${c.green}✓${c.reset} Hub started on port ${config.hub.port}`);
+    startHub({ port: config.hub.port, verbose: false });
 
-        // Handle keyboard
-        if (process.stdin.isTTY) {
-            process.stdin.setRawMode(true);
-            process.stdin.resume();
-            process.stdin.on('data', (data) => {
-                const key = data.toString();
-                if (key === 'q' || key === '\x03') { // q or Ctrl+C
-                    this.cleanup();
-                    process.exit(0);
-                }
-                if (key === 'r') {
-                    this.render();
-                }
-            });
-        }
+    // Spawn agents
+    console.log(`  ${c.bold}Spawning ${config.agents.length} agents...${c.reset}\n`);
+    await new Promise(r => setTimeout(r, 500));
+    spawnAgents(config);
 
-        this.render();
+    // Launch dashboard
+    console.log(`\n  ${c.dim}Launching dashboard...${c.reset}\n`);
+    await new Promise(r => setTimeout(r, 2000));
+
+    const dashboard = new DashboardScreen(config);
+    dashboard.start();
+}
+
+// --- Dashboard-only flow ---
+async function dashboardOnly(configPath: string): Promise<void> {
+    let config = loadConfig(configPath);
+    if (!config) {
+        // Minimal config for dashboard-only mode
+        const portStr = await prompt('Hub port', '3001');
+        config = {
+            team: 'default',
+            hub: { port: parseInt(portStr, 10) || 3001 },
+            agents: [],
+        };
     }
 
-    private connectWithRetry(hubUrl: string): void {
-        try {
-            this.ws = new WebSocket(hubUrl);
+    const dashboard = new DashboardScreen(config);
+    dashboard.start();
+}
 
-            this.ws.on('open', () => {
-                this.ws!.send(JSON.stringify({ type: 'viewer:connect' }));
-                this.render();
-            });
+// --- Interactive mode ---
+async function interactive(configPath: string): Promise<void> {
+    while (true) {
+        const choice = await welcomeScreen();
 
-            this.ws.on('message', (raw) => {
-                let msg: any;
-                try { msg = JSON.parse(raw.toString()); } catch { return; }
-                this.handleMessage(msg);
-            });
+        switch (choice) {
+            case 'start':
+                await startTeam(configPath);
+                return; // Dashboard takes over
 
-            this.ws.on('close', () => {
-                setTimeout(() => this.connectWithRetry(hubUrl), 2000);
-            });
-
-            this.ws.on('error', () => {
-                setTimeout(() => this.connectWithRetry(hubUrl), 2000);
-            });
-        } catch {
-            setTimeout(() => this.connectWithRetry(hubUrl), 2000);
-        }
-    }
-
-    private handleMessage(msg: any): void {
-        switch (msg.type) {
-            case 'agent:status:broadcast':
-                this.agents.set(msg.agentId, {
-                    id: msg.agentId,
-                    name: msg.name,
-                    role: msg.role || '',
-                    capabilities: [],
-                    status: msg.status,
-                });
-                this.render();
-                break;
-
-            case 'agent:disconnected':
-                this.agents.delete(msg.agentId);
-                this.render();
-                break;
-
-            case 'team:update:broadcast':
-                this.updates.push(msg.update);
-                if (this.updates.length > 20) this.updates.shift();
-                this.render();
-                break;
-        }
-    }
-
-    private render(): void {
-        const now = new Date().toLocaleTimeString('en-US', { hour12: false });
-        const connected = this.ws?.readyState === WebSocket.OPEN;
-        const team = this.config.team;
-        const sharedDir = join(homedir(), '.vibehq', 'teams', team, 'shared');
-
-        let out = CLEAR;
-
-        // Header
-        out += `${BOLD}${CYAN}┌${'─'.repeat(60)}┐${RESET}\n`;
-        out += `${BOLD}${CYAN}│${RESET} ${BOLD}⚡ VibeHQ Dashboard${RESET}${' '.repeat(17)}${GRAY}team: ${WHITE}${team}${RESET}${' '.repeat(Math.max(0, 10 - team.length))}${CYAN}│${RESET}\n`;
-        out += `${BOLD}${CYAN}│${RESET} ${connected ? `${GREEN}● Connected${RESET}` : `${YELLOW}○ Connecting...${RESET}`}${' '.repeat(connected ? 25 : 22)}${GRAY}${now}${RESET}    ${CYAN}│${RESET}\n`;
-        out += `${BOLD}${CYAN}├${'─'.repeat(60)}┤${RESET}\n`;
-
-        // Agents
-        out += `${CYAN}│${RESET} ${BOLD}${WHITE}AGENTS${RESET}${' '.repeat(54)}${CYAN}│${RESET}\n`;
-        out += `${CYAN}│${RESET}${' '.repeat(60)}${CYAN}│${RESET}\n`;
-
-        if (this.agents.size === 0) {
-            // Show expected agents from config (waiting)
-            for (const a of this.config.agents) {
-                out += `${CYAN}│${RESET}  ${GRAY}○${RESET} ${padRight(a.name, 10)} ${padRight(a.role, 22)} ${DIM}[${a.cli}]${RESET}${padRight('', 6)}${DIM}waiting${RESET}  ${CYAN}│${RESET}\n`;
-            }
-        } else {
-            for (const agent of this.agents.values()) {
-                const statusColor = agent.status === 'idle' ? GREEN : agent.status === 'working' ? YELLOW : MAGENTA;
-                const dot = `${statusColor}●${RESET}`;
-                const cli = this.config.agents.find(a => a.name === agent.name)?.cli || '?';
-                out += `${CYAN}│${RESET}  ${dot} ${padRight(agent.name, 10)} ${padRight(agent.role || '—', 22)} ${DIM}[${cli}]${RESET}${padRight('', 6)}${statusColor}${agent.status}${RESET}${padRight('', Math.max(0, 7 - agent.status.length))} ${CYAN}│${RESET}\n`;
-            }
-            // Show disconnected expected agents
-            for (const a of this.config.agents) {
-                const online = Array.from(this.agents.values()).some(ag => ag.name === a.name);
-                if (!online) {
-                    out += `${CYAN}│${RESET}  ${GRAY}○${RESET} ${padRight(a.name, 10)} ${padRight(a.role, 22)} ${DIM}[${a.cli}]${RESET}${padRight('', 6)}${DIM}offline${RESET}   ${CYAN}│${RESET}\n`;
-                }
-            }
-        }
-
-        out += `${CYAN}│${RESET}${' '.repeat(60)}${CYAN}│${RESET}\n`;
-        out += `${BOLD}${CYAN}├${'─'.repeat(60)}┤${RESET}\n`;
-
-        // Team Updates
-        out += `${CYAN}│${RESET} ${BOLD}${WHITE}TEAM UPDATES${RESET}${' '.repeat(48)}${CYAN}│${RESET}\n`;
-        out += `${CYAN}│${RESET}${' '.repeat(60)}${CYAN}│${RESET}\n`;
-
-        if (this.updates.length === 0) {
-            out += `${CYAN}│${RESET}  ${DIM}No updates yet${RESET}${' '.repeat(44)}${CYAN}│${RESET}\n`;
-        } else {
-            const recent = this.updates.slice(-5);
-            for (const u of recent) {
-                const time = new Date(u.timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
-                const msg = u.message.length > 40 ? u.message.substring(0, 37) + '...' : u.message;
-                out += `${CYAN}│${RESET}  ${GRAY}${time}${RESET}  ${BOLD}${u.from}${RESET}: ${msg}${padRight('', Math.max(0, 40 - msg.length - u.from.length))} ${CYAN}│${RESET}\n`;
-            }
-        }
-
-        out += `${CYAN}│${RESET}${' '.repeat(60)}${CYAN}│${RESET}\n`;
-        out += `${BOLD}${CYAN}├${'─'.repeat(60)}┤${RESET}\n`;
-
-        // Shared Files
-        out += `${CYAN}│${RESET} ${BOLD}${WHITE}SHARED FILES${RESET}${' '.repeat(48)}${CYAN}│${RESET}\n`;
-        out += `${CYAN}│${RESET}${' '.repeat(60)}${CYAN}│${RESET}\n`;
-
-        try {
-            if (existsSync(sharedDir)) {
-                const files = readdirSync(sharedDir);
-                if (files.length === 0) {
-                    out += `${CYAN}│${RESET}  ${DIM}No shared files yet${RESET}${' '.repeat(39)}${CYAN}│${RESET}\n`;
-                } else {
-                    for (const f of files.slice(0, 5)) {
-                        const stat = statSync(join(sharedDir, f));
-                        const size = stat.size < 1024 ? `${stat.size}B` : `${(stat.size / 1024).toFixed(1)}KB`;
-                        out += `${CYAN}│${RESET}  ${GREEN}📄${RESET} ${padRight(f, 35)} ${GRAY}${padRight(size, 10)}${RESET}    ${CYAN}│${RESET}\n`;
-                    }
-                    if (files.length > 5) {
-                        out += `${CYAN}│${RESET}  ${DIM}...and ${files.length - 5} more${RESET}${' '.repeat(42)}${CYAN}│${RESET}\n`;
+            case 'create': {
+                process.stdout.write(cursor.show);
+                const savedFile = await createTeamScreen();
+                if (savedFile) {
+                    const startNow = await prompt('Start team now? (y/n)', 'y');
+                    if (startNow.toLowerCase() === 'y') {
+                        await startTeam(savedFile);
+                        return;
                     }
                 }
-            } else {
-                out += `${CYAN}│${RESET}  ${DIM}No shared files yet${RESET}${' '.repeat(39)}${CYAN}│${RESET}\n`;
+                break;
             }
-        } catch {
-            out += `${CYAN}│${RESET}  ${DIM}No shared files yet${RESET}${' '.repeat(39)}${CYAN}│${RESET}\n`;
+
+            case 'dashboard':
+                await dashboardOnly(configPath);
+                return;
+
+            case 'quit':
+                process.stdout.write(cursor.show + screen.clear);
+                console.log(`  ${c.dim}Goodbye! 👋${c.reset}\n`);
+                process.exit(0);
         }
-
-        out += `${CYAN}│${RESET}${' '.repeat(60)}${CYAN}│${RESET}\n`;
-        out += `${BOLD}${CYAN}├${'─'.repeat(60)}┤${RESET}\n`;
-        out += `${CYAN}│${RESET} ${GRAY}[r] refresh  [q] quit${RESET}${' '.repeat(38)}${CYAN}│${RESET}\n`;
-        out += `${BOLD}${CYAN}└${'─'.repeat(60)}┘${RESET}\n`;
-
-        process.stdout.write(out);
-    }
-
-    private cleanup(): void {
-        if (this.interval) clearInterval(this.interval);
-        if (this.ws) this.ws.close();
-        process.stdout.write(CLEAR);
     }
 }
 
-function padRight(str: string, len: number): string {
-    if (str.length >= len) return str.substring(0, len);
-    return str + ' '.repeat(len - str.length);
+// --- Init (backward compat) ---
+function initConfig(): void {
+    const example: VibehqConfig = {
+        team: 'my-team',
+        hub: { port: 3001 },
+        agents: [
+            { name: 'Alex', role: 'Backend Engineer', cli: 'claude', cwd: 'D:\\my-project\\backend' },
+            { name: 'Jordan', role: 'Frontend Engineer', cli: 'codex', cwd: 'D:\\my-project\\frontend' },
+        ],
+    };
+    const { writeFileSync } = require('fs');
+    writeFileSync('vibehq.config.json', JSON.stringify(example, null, 4) + '\n');
+    console.log(`${c.green}✓${c.reset} Created ${c.bold}vibehq.config.json${c.reset}`);
 }
 
 // --- Main ---
-const { configPath } = parseArgs();
-const config = loadConfig(configPath);
+const { command, configPath } = getCommand();
 
-console.log(`\n${BOLD}${CYAN}⚡ VibeHQ${RESET} — Starting team "${config.team}"\n`);
-
-// 1. Start Hub
-console.log(`${BOLD}  Hub${RESET} → port ${config.hub.port}`);
-startHub({ port: config.hub.port, verbose: false });
-
-// 2. Wait a moment for hub to start, then spawn agents
-console.log(`\n${BOLD}  Spawning agents...${RESET}`);
-setTimeout(() => {
-    spawnAgents(config);
-
-    // 3. Start Dashboard after a short delay
-    console.log(`\n${GRAY}  Starting dashboard in 3s...${RESET}`);
-    setTimeout(() => {
-        const dashboard = new Dashboard(config);
-        dashboard.start();
-    }, 3000);
-}, 500);
+switch (command) {
+    case 'start':
+        startTeam(configPath);
+        break;
+    case 'init':
+        initConfig();
+        break;
+    case 'create':
+        createTeamScreen().then(() => process.exit(0));
+        break;
+    case 'dashboard':
+        dashboardOnly(configPath);
+        break;
+    default:
+        // No command = interactive mode
+        interactive(configPath);
+        break;
+}
