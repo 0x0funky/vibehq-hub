@@ -1,21 +1,21 @@
 // ============================================================
 // Response Parser — extracts CLI responses from stdout stream
-// Strips ANSI escape codes before matching markers.
+// Strips ANSI before marker detection; raw data always passes through.
 // ============================================================
 
 const RESPONSE_START = '[TEAM_RESPONSE_START]';
 const RESPONSE_END = '[TEAM_RESPONSE_END]';
 
 /**
- * Strip ALL ANSI escape sequences (from VibeHQ output-parser.ts pattern)
+ * Strip ALL ANSI escape sequences
  */
 function stripAnsi(str: string): string {
     return str
-        .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')   // CSI sequences
-        .replace(/\x1b\][^\x07]*\x07/g, '')         // OSC sequences
-        .replace(/\x1b[()][A-Z0-9]/g, '')           // Character set selection
-        .replace(/\x1b[^\[(\]]/g, '')                // Other ESC sequences
-        .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, ''); // Control chars (except \n)
+        .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+        .replace(/\x1b\][^\x07]*\x07/g, '')
+        .replace(/\x1b[()][A-Z0-9]/g, '')
+        .replace(/\x1b[^\[(\]]/g, '')
+        .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '');
 }
 
 export interface PendingResponse {
@@ -26,9 +26,9 @@ export interface PendingResponse {
 }
 
 export class ResponseParser {
-    private buffer = '';
+    private cleanBuffer = '';
     private capturing = false;
-    private capturedLines: string[] = [];
+    private capturedContent = '';
     private pendingResponses: Map<string, PendingResponse> = new Map();
     private currentRequestId: string | null = null;
     private timeout: number;
@@ -37,23 +37,19 @@ export class ResponseParser {
         this.timeout = timeout;
     }
 
-    /**
-     * Register a pending response to capture.
-     */
     expectResponse(requestId: string): Promise<string> {
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.pendingResponses.delete(requestId);
                 if (this.currentRequestId === requestId) {
                     this.capturing = false;
-                    this.capturedLines = [];
+                    this.capturedContent = '';
                     this.currentRequestId = null;
                 }
-                reject(new Error(`Timeout waiting for CLI response (${this.timeout / 1000}s)`));
+                reject(new Error(`Timeout (${this.timeout / 1000}s)`));
             }, this.timeout);
 
             this.pendingResponses.set(requestId, { requestId, resolve, reject, timer });
-
             if (!this.currentRequestId) {
                 this.currentRequestId = requestId;
             }
@@ -61,67 +57,42 @@ export class ResponseParser {
     }
 
     /**
-     * Feed raw PTY/stdout data into the parser.
-     * Strips ANSI for marker detection, passes raw data through to user.
+     * Feed raw PTY data. Returns the data that should be shown to user.
+     * Raw data ALWAYS passes through — ANSI stripping is only for marker detection.
      */
     feed(data: string): string {
-        // Always pass raw data through to the user's terminal
-        // But strip ANSI for our marker detection logic
-        const cleanData = stripAnsi(data);
-        this.buffer += cleanData;
+        const clean = stripAnsi(data);
+        this.cleanBuffer += clean;
+        this.processCleanBuffer();
 
-        // Process line by line for marker detection
-        this.processBuffer();
-
-        // If we're currently capturing a response, suppress the raw output
-        // so the markers and response content don't clutter the user's terminal
-        if (this.capturing) {
-            return '';
-        }
-
-        // Check if the raw data contains our markers (with possible ANSI in between)
-        if (cleanData.includes(RESPONSE_START) || cleanData.includes(RESPONSE_END)) {
-            return ''; // Suppress marker lines from user view
-        }
-
+        // Always pass raw data through to user's terminal
         return data;
     }
 
-    /**
-     * Process the clean-text buffer looking for markers.
-     */
-    private processBuffer(): void {
-        while (this.buffer.length > 0) {
+    private processCleanBuffer(): void {
+        while (this.cleanBuffer.length > 0) {
             if (this.capturing) {
-                const endIdx = this.buffer.indexOf(RESPONSE_END);
+                const endIdx = this.cleanBuffer.indexOf(RESPONSE_END);
                 if (endIdx !== -1) {
-                    // End marker found — capture everything before it
-                    const content = this.buffer.substring(0, endIdx);
-                    if (content.trim()) {
-                        this.capturedLines.push(content);
-                    }
-                    this.buffer = this.buffer.substring(endIdx + RESPONSE_END.length);
-
-                    // Resolve the response
+                    this.capturedContent += this.cleanBuffer.substring(0, endIdx);
+                    this.cleanBuffer = this.cleanBuffer.substring(endIdx + RESPONSE_END.length);
                     this.resolveCurrentResponse();
                     this.capturing = false;
                 } else {
-                    // Still waiting for end marker, keep buffering
-                    // But don't let buffer grow unbounded — check periodically
-                    break;
+                    this.capturedContent += this.cleanBuffer;
+                    this.cleanBuffer = '';
                 }
             } else {
-                const startIdx = this.buffer.indexOf(RESPONSE_START);
+                const startIdx = this.cleanBuffer.indexOf(RESPONSE_START);
                 if (startIdx !== -1) {
-                    // Start marker found — begin capturing
-                    this.buffer = this.buffer.substring(startIdx + RESPONSE_START.length);
+                    this.cleanBuffer = this.cleanBuffer.substring(startIdx + RESPONSE_START.length);
                     this.capturing = true;
-                    this.capturedLines = [];
+                    this.capturedContent = '';
                 } else {
-                    // No start marker — clear buffer but keep last chunk for partial matching
-                    const keepLength = RESPONSE_START.length + 10;
-                    if (this.buffer.length > keepLength) {
-                        this.buffer = this.buffer.substring(this.buffer.length - keepLength);
+                    // Keep tail for partial marker matching
+                    const keep = RESPONSE_START.length + 5;
+                    if (this.cleanBuffer.length > keep) {
+                        this.cleanBuffer = this.cleanBuffer.substring(this.cleanBuffer.length - keep);
                     }
                     break;
                 }
@@ -129,9 +100,6 @@ export class ResponseParser {
         }
     }
 
-    /**
-     * Resolve the current pending response.
-     */
     private resolveCurrentResponse(): void {
         if (!this.currentRequestId) return;
 
@@ -139,29 +107,21 @@ export class ResponseParser {
         if (pending) {
             clearTimeout(pending.timer);
             this.pendingResponses.delete(this.currentRequestId);
-
-            // Join and clean the captured content
-            const fullResponse = this.capturedLines
-                .join('')
-                .replace(/\(your response here\)/g, '') // Remove placeholder if echoed
+            const cleaned = this.capturedContent
+                .replace(/\(your response here\)/g, '')
                 .trim();
-
-            pending.resolve(fullResponse);
+            pending.resolve(cleaned);
         }
 
-        this.capturedLines = [];
+        this.capturedContent = '';
         this.currentRequestId = null;
 
-        // Activate next pending request if any
         const nextEntry = this.pendingResponses.entries().next();
         if (!nextEntry.done) {
             this.currentRequestId = nextEntry.value[0];
         }
     }
 
-    /**
-     * Cleanup all pending responses.
-     */
     destroy(): void {
         for (const pending of this.pendingResponses.values()) {
             clearTimeout(pending.timer);

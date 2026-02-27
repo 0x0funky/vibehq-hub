@@ -91,10 +91,6 @@ function parseArgs(): { name: string; role: string; hub: string; timeout: number
 
 const { name, role, hub, timeout, command, commandArgs } = parseArgs();
 
-console.error(`[vibehq-spawn] Starting "${name}" (${role}) wrapping: ${command} ${commandArgs.join(' ')}`);
-console.error(`[vibehq-spawn] Hub: ${hub}`);
-console.error('');
-
 const spawner = new AgentSpawner({
     name,
     role,
@@ -104,7 +100,6 @@ const spawner = new AgentSpawner({
     askTimeout: timeout,
 });
 
-spawner.start().catch((err) => {
-    console.error('[vibehq-spawn] Failed to start:', err.message);
+spawner.start().catch(() => {
     process.exit(1);
 });
