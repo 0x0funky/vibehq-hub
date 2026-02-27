@@ -147,13 +147,31 @@ export class AgentSpawner {
     }
 
     /**
-     * Write text to PTY, then press Enter after a delay.
+     * Write text to PTY in chunks, then press Enter.
+     * PTY input buffers are limited (~4096 bytes), so long messages must be chunked.
      */
     private writeToPty(text: string): void {
-        this.ptyProcess?.write(text);
-        setTimeout(() => {
-            this.ptyProcess?.write('\r');
-        }, 200);
+        const CHUNK_SIZE = 1024;
+        const chunks: string[] = [];
+
+        for (let i = 0; i < text.length; i += CHUNK_SIZE) {
+            chunks.push(text.substring(i, i + CHUNK_SIZE));
+        }
+
+        const writeChunk = (index: number) => {
+            if (index >= chunks.length) {
+                // All chunks written, send Enter
+                setTimeout(() => {
+                    this.ptyProcess?.write('\r');
+                }, 100);
+                return;
+            }
+            this.ptyProcess?.write(chunks[index]);
+            // Small delay between chunks to let PTY buffer drain
+            setTimeout(() => writeChunk(index + 1), 50);
+        };
+
+        writeChunk(0);
     }
 
     /**
