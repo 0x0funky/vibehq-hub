@@ -65,6 +65,8 @@ export class AgentSpawner {
             this.configureClaudeMcp(name, role, hubUrl);
         } else if (cmd === 'codex' || cmd.includes('codex')) {
             this.configureCodexMcp(name, role, hubUrl);
+        } else if (cmd === 'gemini' || cmd.includes('gemini')) {
+            this.configureGeminiMcp(name, role, hubUrl);
         }
     }
 
@@ -132,6 +134,26 @@ export class AgentSpawner {
         content += teamBlock;
 
         writeFileSync(configPath, content);
+    }
+
+    /**
+     * Update ~/.gemini/settings.json for Gemini CLI.
+     */
+    private configureGeminiMcp(name: string, role: string, hubUrl: string): void {
+        const configPath = join(homedir(), '.gemini', 'settings.json');
+        let config: any = {};
+
+        if (existsSync(configPath)) {
+            try { config = JSON.parse(readFileSync(configPath, 'utf-8')); } catch { config = {}; }
+        }
+
+        if (!config.mcpServers) config.mcpServers = {};
+        config.mcpServers.team = {
+            command: 'vibehq-agent',
+            args: ['--name', name, '--role', role, '--hub', hubUrl],
+        };
+
+        writeFileSync(configPath, JSON.stringify(config, null, 2));
     }
 
     private spawnCli(): void {
