@@ -13,14 +13,15 @@ const LOGO = `
     ╚████╔╝ ██║██████╔╝███████╗██║  ██║╚██████╔╝
      ╚═══╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚══▀▀═╝`;
 
-const TAGLINE = 'Multi-Agent Team Collaboration';
+const TAGLINE = 'Run a Real AI Company — Multi-Agent Team Platform';
 
 const FEATURES = [
+    '🏢 Run your own Real AI Company with multiple agent teams',
     '⚡ Spawn Claude, Codex & Gemini agents side-by-side',
     '🤝 Real-time messaging between agents via MCP tools',
     '📁 Shared file system per team — no more copy-paste',
-    '📋 Team bulletin board — track progress, reduce token waste',
-    '🔀 Full team isolation — run multiple teams in parallel',
+    '📋 Team bulletin board — track progress, cut token waste',
+    '🔀 Full isolation — multiple teams, multiple projects',
 ];
 
 export async function welcomeScreen(): Promise<string> {

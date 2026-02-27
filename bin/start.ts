@@ -5,6 +5,7 @@
 import { startHub } from '../src/hub/server.js';
 import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { exec } from 'child_process';
+import { createServer } from 'net';
 import { c, screen, cursor } from '../src/tui/renderer.js';
 import { welcomeScreen } from '../src/tui/screens/welcome.js';
 import { createTeamScreen } from '../src/tui/screens/create-team.js';
@@ -99,8 +100,7 @@ function loadTeams(configPath: string): TeamConfig[] | null {
 // --- Check if port is available ---
 async function checkPort(port: number): Promise<boolean> {
     return new Promise((resolve) => {
-        const net = require('net');
-        const server = net.createServer();
+        const server = createServer();
         server.once('error', () => resolve(false));
         server.once('listening', () => { server.close(); resolve(true); });
         server.listen(port);

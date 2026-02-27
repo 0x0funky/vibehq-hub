@@ -42,25 +42,35 @@ export class DashboardScreen {
             // Refresh every 2s
             this.interval = setInterval(() => this.render(), 2000);
 
-            // Keyboard
+            // Keyboard handler — stored so we can remove it
+            const keyHandler = (key: string) => {
+                if (key === 'q') {
+                    process.stdin.removeListener('data', keyHandler);
+                    this.cleanup();
+                    process.exit(0);
+                } else if (key === '\x03') { // Ctrl+C
+                    process.stdin.removeListener('data', keyHandler);
+                    this.cleanup();
+                    process.exit(0);
+                } else if (key === 'b') {
+                    // Remove listener FIRST, then cleanup
+                    process.stdin.removeListener('data', keyHandler);
+                    if (process.stdin.isTTY) {
+                        process.stdin.setRawMode(false);
+                        process.stdin.pause();
+                    }
+                    this.cleanup();
+                    resolve('back');
+                } else if (key === 'r') {
+                    this.render();
+                }
+            };
+
             if (process.stdin.isTTY) {
                 process.stdin.setRawMode(true);
                 process.stdin.resume();
                 process.stdin.setEncoding('utf8');
-                process.stdin.on('data', (key: string) => {
-                    if (key === 'q') {
-                        this.cleanup();
-                        process.exit(0);
-                    } else if (key === '\x03') { // Ctrl+C
-                        this.cleanup();
-                        process.exit(0);
-                    } else if (key === 'b') {
-                        this.cleanup();
-                        resolve('back');
-                    } else if (key === 'r') {
-                        this.render();
-                    }
-                });
+                process.stdin.on('data', keyHandler);
             }
 
             process.stdout.write(cursor.hide);
@@ -236,8 +246,8 @@ export class DashboardScreen {
     }
 
     private cleanup(): void {
-        if (this.interval) clearInterval(this.interval);
-        if (this.ws) this.ws.close();
+        if (this.interval) { clearInterval(this.interval); this.interval = null; }
+        if (this.ws) { this.ws.close(); this.ws = null; }
         process.stdout.write(cursor.show + screen.clear);
     }
 }
