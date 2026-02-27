@@ -48,6 +48,7 @@ interface AgentConfig {
     role: string;
     cli: string;
     cwd: string;
+    systemPrompt?: string;
 }
 
 interface TeamConfig {
@@ -176,7 +177,11 @@ function detectLinuxTerminal(): string | null {
 
 // --- Spawn one agent in a new terminal window ---
 function spawnOneAgent(agent: AgentConfig, team: TeamConfig, hubUrl: string): void {
-    const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}" -- ${agent.cli}`;
+    // Escape system prompt for shell arg (replace " with \")
+    const sysPromptArg = agent.systemPrompt
+        ? ` --system-prompt "${agent.systemPrompt.replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`
+        : '';
+    const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}"${sysPromptArg} -- ${agent.cli}`;
     const safeCmd = spawnCmd.replace(/'/g, "'\\''");
 
     if (process.platform === 'win32') {

@@ -33,16 +33,28 @@
             ]
         },
         {
-            "name": "Vibehq",
+            "name": "AuraTravel",
             "hub": {
                 "port": 4019
             },
             "agents": [
                 {
-                    "name": "Robert",
-                    "role": "AI Engineer",
+                    "name": "Jordan",
+                    "role": "Frontend engineer",
+                    "cli": "gemini",
+                    "cwd": "D:\\auratravel\\auratravel_frontend"
+                },
+                {
+                    "name": "Riley",
+                    "role": "Backend engineer",
                     "cli": "claude",
-                    "cwd": "D:\\agent-hub"
+                    "cwd": "D:\\auratravel\\auratravel_backend"
+                },
+                {
+                    "name": "Alex",
+                    "role": "Project Manager",
+                    "cli": "codex",
+                    "cwd": "D:\\auratravel"
                 }
             ]
         }

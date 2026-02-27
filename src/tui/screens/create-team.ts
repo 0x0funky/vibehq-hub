@@ -3,20 +3,17 @@
 // ============================================================
 
 import { writeFileSync, existsSync, readFileSync } from 'fs';
-import { c, screen, cursor, box, getWidth } from '../renderer.js';
+import { c, screen, cursor, getWidth, padRight } from '../renderer.js';
 import { prompt, confirm, selectInput } from '../input.js';
+import { ROLE_PRESETS, getPresetByRole } from '../role-presets.js';
+import { selectMenu } from '../menu.js';
 
 interface AgentConfig {
     name: string;
     role: string;
     cli: string;
     cwd: string;
-}
-
-interface TeamConfig {
-    team: string;
-    hub: { port: number };
-    agents: AgentConfig[];
+    systemPrompt?: string;
 }
 
 export async function createTeamScreen(): Promise<string | null> {
@@ -42,14 +39,46 @@ export async function createTeamScreen(): Promise<string | null> {
         console.log(`  ${c.cyan}── Agent ${agentNum} ──${c.reset}`);
 
         const name = await prompt('  Agent name', `Agent${agentNum}`);
-        const role = await prompt('  Role', 'Engineer');
-        const cli = await selectInput('  CLI type', ['claude', 'codex', 'gemini']);
+
+        // Role selector with presets
+        console.log(`\n  ${c.dim}Select a role:${c.reset}`);
+        const roleItems = ROLE_PRESETS.map(p => ({
+            label: p.role,
+            description: p.description,
+            value: p.role,
+        }));
+
+        const selectedRole = await selectMenu(roleItems, '  Role');
+
+        let customRole = selectedRole;
+        let systemPrompt = getPresetByRole(selectedRole)?.defaultSystemPrompt ?? '';
+
+        // Custom role — ask for role name
+        if (selectedRole === 'Custom') {
+            customRole = await prompt('  Custom role title', 'Engineer');
+        }
+
+        // Show default system prompt and allow customization
+        console.log(`\n  ${c.green}✓${c.reset} Default system prompt set for ${c.bold}${customRole}${c.reset}`);
+        console.log(`  ${c.dim}(covers workflow, communication protocol, and VibHQ tools)${c.reset}\n`);
+
+        const customize = await confirm('  Customize system prompt?', false);
+        if (customize) {
+            console.log(`  ${c.dim}Enter your system prompt (press Enter twice when done):${c.reset}`);
+            console.log(`  ${c.dim}Current prompt starts with: "${systemPrompt.slice(0, 80).trim()}..."${c.reset}\n`);
+            const extra = await prompt('  Additional instructions (appended to default)', '');
+            if (extra) {
+                systemPrompt = systemPrompt + `\n\n## Additional Instructions:\n${extra}`;
+            }
+        }
+
+        const cli = await selectInput('  CLI type', ['claude', 'codex', 'gemini', 'aider', 'cursor']);
         const cwd = await prompt('  Project directory');
 
-        agents.push({ name, role, cli, cwd });
+        agents.push({ name, role: customRole, cli, cwd, systemPrompt });
         agentNum++;
 
-        console.log(`  ${c.green}✓${c.reset} Added ${c.bold}${name}${c.reset} (${role})\n`);
+        console.log(`  ${c.green}✓${c.reset} Added ${c.bold}${name}${c.reset} (${customRole} · ${cli})\n`);
 
         addMore = await confirm('  Add another agent?', agents.length < 2);
     }
@@ -62,6 +91,7 @@ export async function createTeamScreen(): Promise<string | null> {
     for (const a of agents) {
         console.log(`    ${c.cyan}●${c.reset} ${a.name} — ${a.role} [${a.cli}]`);
         console.log(`      ${c.dim}${a.cwd}${c.reset}`);
+        console.log(`      ${c.dim}System prompt: ${a.systemPrompt ? '✓ set' : '—'}${c.reset}`);
     }
     console.log('');
 
@@ -78,7 +108,6 @@ export async function createTeamScreen(): Promise<string | null> {
             if (raw.teams && Array.isArray(raw.teams)) {
                 existingTeams = raw.teams;
             } else if (raw.team && raw.agents) {
-                // Legacy format → convert
                 existingTeams = [{ name: raw.team, hub: raw.hub, agents: raw.agents }];
             }
         } catch { }

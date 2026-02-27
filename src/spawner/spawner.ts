@@ -35,6 +35,7 @@ export interface SpawnerOptions {
     team: string;
     command: string;
     args: string[];
+    systemPrompt?: string;
 }
 
 export class AgentSpawner {
@@ -52,6 +53,17 @@ export class AgentSpawner {
         this.autoConfigureMcp();
         this.spawnCli();
         await this.connectToHub();
+
+        // Inject system prompt after CLI has started up
+        if (this.options.systemPrompt && this.ptyProcess) {
+            const delay = this.options.command.includes('codex') ? 5000 : 3000;
+            setTimeout(() => {
+                if (this.ptyProcess && this.options.systemPrompt) {
+                    const prompt = this.options.systemPrompt.trim();
+                    this.ptyProcess.write(prompt + '\r');
+                }
+            }, delay);
+        }
     }
 
     /**

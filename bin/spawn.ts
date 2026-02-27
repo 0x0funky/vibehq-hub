@@ -12,12 +12,13 @@ Spawn a CLI agent wrapped with Hub connectivity.
 The CLI process runs normally, but teammate messages are injected via stdin.
 
 Options:
-  -n, --name <string>     Agent name (required)
-  -r, --role <string>     Agent role (default: "Engineer")
-  -u, --hub <url>         Hub WebSocket URL (default: ws://localhost:3001)
-      --team <string>     Team name (default: "default")
-  -t, --timeout <ms>      Response timeout in ms (default: 120000)
-  -h, --help              Show help
+  -n, --name <string>          Agent name (required)
+  -r, --role <string>          Agent role (default: "Engineer")
+  -u, --hub <url>              Hub WebSocket URL (default: ws://localhost:3001)
+      --team <string>          Team name (default: "default")
+  -t, --timeout <ms>           Response timeout in ms (default: 120000)
+      --system-prompt <text>   System prompt to inject on startup
+  -h, --help                   Show help
 
 Examples:
   vibehq-spawn --name Claude --role "Backend Engineer" --team dexless -- claude
@@ -26,13 +27,14 @@ Examples:
 `);
 }
 
-function parseArgs(): { name: string; role: string; hub: string; team: string; timeout: number; command: string; commandArgs: string[] } {
+function parseArgs(): { name: string; role: string; hub: string; team: string; timeout: number; systemPrompt: string; command: string; commandArgs: string[] } {
     const args = process.argv.slice(2);
     let name = '';
     let role = 'Engineer';
     let hub = 'ws://localhost:3001';
     let team = 'default';
     let timeout = 120000;
+    let systemPrompt = '';
     let command = '';
     let commandArgs: string[] = [];
 
@@ -71,6 +73,9 @@ function parseArgs(): { name: string; role: string; hub: string; team: string; t
                     process.exit(1);
                 }
                 break;
+            case '--system-prompt':
+                systemPrompt = ourArgs[++i];
+                break;
             case '-h':
             case '--help':
                 printHelp();
@@ -91,10 +96,10 @@ function parseArgs(): { name: string; role: string; hub: string; team: string; t
         process.exit(1);
     }
 
-    return { name, role, hub, team, timeout, command, commandArgs };
+    return { name, role, hub, team, timeout, systemPrompt, command, commandArgs };
 }
 
-const { name, role, hub, team, timeout, command, commandArgs } = parseArgs();
+const { name, role, hub, team, timeout, systemPrompt, command, commandArgs } = parseArgs();
 
 const spawner = new AgentSpawner({
     name,
@@ -103,6 +108,7 @@ const spawner = new AgentSpawner({
     team,
     command,
     args: commandArgs,
+    systemPrompt,
 });
 
 spawner.start().catch(() => {
