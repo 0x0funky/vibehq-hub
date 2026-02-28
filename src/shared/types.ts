@@ -183,6 +183,149 @@ export interface TeamUpdateListResponseMessage {
     updates: TeamUpdate[];
 }
 
+// --- WS Messages: Task Lifecycle ---
+
+export type TaskStatus = 'created' | 'accepted' | 'rejected' | 'in_progress' | 'blocked' | 'done';
+
+export interface TaskState {
+    taskId: string;
+    title: string;
+    description: string;
+    assignee: string;
+    creator: string;
+    priority: TaskPriority;
+    status: TaskStatus;
+    artifact?: string;   // shared file path or summary on completion
+    statusNote?: string;  // reason for blocked, rejection note, etc.
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface TaskCreateMessage {
+    type: 'task:create';
+    title: string;
+    description: string;
+    assignee: string;
+    priority?: TaskPriority;
+}
+
+export interface TaskCreatedBroadcast {
+    type: 'task:created';
+    task: TaskState;
+}
+
+export interface TaskAcceptMessage {
+    type: 'task:accept';
+    taskId: string;
+    accepted: boolean;   // true = accept, false = reject
+    note?: string;
+}
+
+export interface TaskUpdateMessage {
+    type: 'task:update';
+    taskId: string;
+    status: 'in_progress' | 'blocked';
+    note?: string;
+}
+
+export interface TaskCompleteMessage {
+    type: 'task:complete';
+    taskId: string;
+    artifact: string;    // required — shared file path or summary
+    note?: string;
+}
+
+export interface TaskStatusBroadcast {
+    type: 'task:status:broadcast';
+    task: TaskState;
+}
+
+export interface TaskListRequestMessage {
+    type: 'task:list';
+    filter?: 'all' | 'mine' | 'active';
+}
+
+export interface TaskListResponseMessage {
+    type: 'task:list:response';
+    tasks: TaskState[];
+}
+
+// --- WS Messages: Artifact System ---
+
+export type ArtifactType = 'spec' | 'plan' | 'report' | 'decision' | 'code' | 'other';
+
+export interface ArtifactMeta {
+    filename: string;
+    type: ArtifactType;
+    summary: string;
+    owner: string;
+    relatesTo?: string;  // taskId
+    publishedAt: string;
+    updatedAt: string;
+}
+
+export interface ArtifactPublishMessage {
+    type: 'artifact:publish';
+    filename: string;
+    artifactType: ArtifactType;
+    summary: string;
+    relatesTo?: string;
+}
+
+export interface ArtifactChangedBroadcast {
+    type: 'artifact:changed';
+    artifact: ArtifactMeta;
+    action: 'created' | 'updated';
+}
+
+export interface ArtifactListRequestMessage {
+    type: 'artifact:list';
+    artifactType?: ArtifactType;
+}
+
+export interface ArtifactListResponseMessage {
+    type: 'artifact:list:response';
+    artifacts: ArtifactMeta[];
+}
+
+// --- WS Messages: Contract ---
+
+export interface ContractState {
+    specPath: string;
+    requiredSigners: string[];
+    signers: { name: string; comment?: string; signedAt: string }[];
+    approved: boolean;
+    publishedBy: string;
+    publishedAt: string;
+}
+
+export interface ContractPublishMessage {
+    type: 'contract:publish';
+    specPath: string;
+    requiredSigners: string[];
+}
+
+export interface ContractSignMessage {
+    type: 'contract:sign';
+    specPath: string;
+    comment?: string;
+}
+
+export interface ContractStatusBroadcast {
+    type: 'contract:status';
+    contract: ContractState;
+}
+
+export interface ContractCheckMessage {
+    type: 'contract:check';
+    specPath?: string;
+}
+
+export interface ContractCheckResponseMessage {
+    type: 'contract:check:response';
+    contracts: ContractState[];
+}
+
 // --- Union type for all messages ---
 
 export type HubMessage =
@@ -207,4 +350,21 @@ export type HubMessage =
     | TeamUpdatePostMessage
     | TeamUpdateBroadcastMessage
     | TeamUpdateListRequestMessage
-    | TeamUpdateListResponseMessage;
+    | TeamUpdateListResponseMessage
+    | TaskCreateMessage
+    | TaskCreatedBroadcast
+    | TaskAcceptMessage
+    | TaskUpdateMessage
+    | TaskCompleteMessage
+    | TaskStatusBroadcast
+    | TaskListRequestMessage
+    | TaskListResponseMessage
+    | ArtifactPublishMessage
+    | ArtifactChangedBroadcast
+    | ArtifactListRequestMessage
+    | ArtifactListResponseMessage
+    | ContractPublishMessage
+    | ContractSignMessage
+    | ContractStatusBroadcast
+    | ContractCheckMessage
+    | ContractCheckResponseMessage;

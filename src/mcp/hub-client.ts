@@ -26,6 +26,23 @@ import type {
     TeamUpdateBroadcastMessage,
     AgentStatus,
     TaskPriority,
+    TaskState,
+    TaskCreateMessage,
+    TaskAcceptMessage,
+    TaskUpdateMessage,
+    TaskCompleteMessage,
+    TaskListRequestMessage,
+    TaskListResponseMessage,
+    ArtifactMeta,
+    ArtifactType,
+    ArtifactPublishMessage,
+    ArtifactListRequestMessage,
+    ArtifactListResponseMessage,
+    ContractPublishMessage,
+    ContractSignMessage,
+    ContractCheckMessage,
+    ContractCheckResponseMessage,
+    ContractState,
 } from '../shared/types.js';
 
 export class HubClient extends EventEmitter {
@@ -39,6 +56,9 @@ export class HubClient extends EventEmitter {
     private askTimeout: number;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private pendingUpdateRequests: Map<string, (updates: TeamUpdate[]) => void> = new Map();
+    private pendingTaskListRequests: Map<string, (tasks: TaskState[]) => void> = new Map();
+    private pendingArtifactListRequests: Map<string, (artifacts: ArtifactMeta[]) => void> = new Map();
+    private pendingContractCheckRequests: Map<string, (contracts: ContractState[]) => void> = new Map();
 
     constructor(hubUrl: string, name: string, role: string, team = 'default', askTimeout = 120000) {
         super();
@@ -110,6 +130,33 @@ export class HubClient extends EventEmitter {
 
                         case 'team:update:list:response':
                             this.handleUpdateListResponse(msg as TeamUpdateListResponseMessage);
+                            break;
+
+                        // V2: Task lifecycle
+                        case 'task:created':
+                            this.emit('task:created', msg.task);
+                            break;
+                        case 'task:status:broadcast':
+                            this.emit('task:status', msg.task);
+                            break;
+                        case 'task:list:response':
+                            this.handleTaskListResponse(msg as TaskListResponseMessage);
+                            break;
+
+                        // V2: Artifact
+                        case 'artifact:changed':
+                            this.emit('artifact:changed', msg.artifact, msg.action);
+                            break;
+                        case 'artifact:list:response':
+                            this.handleArtifactListResponse(msg as ArtifactListResponseMessage);
+                            break;
+
+                        // V2: Contract
+                        case 'contract:status':
+                            this.emit('contract:status', msg.contract);
+                            break;
+                        case 'contract:check:response':
+                            this.handleContractCheckResponse(msg as ContractCheckResponseMessage);
                             break;
                     }
                 });
@@ -304,6 +351,107 @@ export class HubClient extends EventEmitter {
             break;
         }
     }
+
+    private handleTaskListResponse(msg: TaskListResponseMessage): void {
+        for (const [id, resolve] of this.pendingTaskListRequests.entries()) {
+            this.pendingTaskListRequests.delete(id);
+            resolve(msg.tasks);
+            break;
+        }
+    }
+
+    private handleArtifactListResponse(msg: ArtifactListResponseMessage): void {
+        for (const [id, resolve] of this.pendingArtifactListRequests.entries()) {
+            this.pendingArtifactListRequests.delete(id);
+            resolve(msg.artifacts);
+            break;
+        }
+    }
+
+    private handleContractCheckResponse(msg: ContractCheckResponseMessage): void {
+        for (const [id, resolve] of this.pendingContractCheckRequests.entries()) {
+            this.pendingContractCheckRequests.delete(id);
+            resolve(msg.contracts);
+            break;
+        }
+    }
+
+    // --- V2: Task Lifecycle ---
+
+    createTask(title: string, description: string, assignee: string, priority: TaskPriority = 'medium'): void {
+        this.send({ type: 'task:create', title, description, assignee, priority } satisfies TaskCreateMessage);
+    }
+
+    acceptTask(taskId: string, accepted: boolean, note?: string): void {
+        this.send({ type: 'task:accept', taskId, accepted, note } satisfies TaskAcceptMessage);
+    }
+
+    updateTask(taskId: string, status: 'in_progress' | 'blocked', note?: string): void {
+        this.send({ type: 'task:update', taskId, status, note } satisfies TaskUpdateMessage);
+    }
+
+    completeTask(taskId: string, artifact: string, note?: string): void {
+        this.send({ type: 'task:complete', taskId, artifact, note } satisfies TaskCompleteMessage);
+    }
+
+    async listTasks(filter: 'all' | 'mine' | 'active' = 'all'): Promise<TaskState[]> {
+        return new Promise((resolve) => {
+            const requestId = randomUUID();
+            this.pendingTaskListRequests.set(requestId, resolve);
+            this.send({ type: 'task:list', filter } satisfies TaskListRequestMessage);
+            setTimeout(() => {
+                if (this.pendingTaskListRequests.has(requestId)) {
+                    this.pendingTaskListRequests.delete(requestId);
+                    resolve([]);
+                }
+            }, 5000);
+        });
+    }
+
+    // --- V2: Artifact ---
+
+    publishArtifact(filename: string, artifactType: ArtifactType, summary: string, relatesTo?: string): void {
+        this.send({ type: 'artifact:publish', filename, artifactType, summary, relatesTo } satisfies ArtifactPublishMessage);
+    }
+
+    async listArtifacts(artifactType?: ArtifactType): Promise<ArtifactMeta[]> {
+        return new Promise((resolve) => {
+            const requestId = randomUUID();
+            this.pendingArtifactListRequests.set(requestId, resolve);
+            this.send({ type: 'artifact:list', artifactType } satisfies ArtifactListRequestMessage);
+            setTimeout(() => {
+                if (this.pendingArtifactListRequests.has(requestId)) {
+                    this.pendingArtifactListRequests.delete(requestId);
+                    resolve([]);
+                }
+            }, 5000);
+        });
+    }
+
+    // --- V2: Contract ---
+
+    publishContract(specPath: string, requiredSigners: string[]): void {
+        this.send({ type: 'contract:publish', specPath, requiredSigners } satisfies ContractPublishMessage);
+    }
+
+    signContract(specPath: string, comment?: string): void {
+        this.send({ type: 'contract:sign', specPath, comment } satisfies ContractSignMessage);
+    }
+
+    async checkContract(specPath?: string): Promise<ContractState[]> {
+        return new Promise((resolve) => {
+            const requestId = randomUUID();
+            this.pendingContractCheckRequests.set(requestId, resolve);
+            this.send({ type: 'contract:check', specPath } satisfies ContractCheckMessage);
+            setTimeout(() => {
+                if (this.pendingContractCheckRequests.has(requestId)) {
+                    this.pendingContractCheckRequests.delete(requestId);
+                    resolve([]);
+                }
+            }, 5000);
+        });
+    }
+
 
     private scheduleReconnect(): void {
         if (this.reconnectTimer) return;
