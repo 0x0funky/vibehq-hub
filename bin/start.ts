@@ -303,7 +303,7 @@ async function startTeam(configPath: string): Promise<void> {
 
     // Start Hub on the found port
     console.log(`  ${c.green}✓${c.reset} Hub started on port ${c.bold}${actualPort}${c.reset}`);
-    const wss = startHub({ port: actualPort, verbose: false });
+    const wss = startHub({ port: actualPort, verbose: false, team: team.name });
     runningHub = { wss, port: actualPort };
 
     // Spawn agents (pass actual hub port they should connect to)

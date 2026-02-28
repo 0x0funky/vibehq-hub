@@ -4,6 +4,9 @@
 
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import { AgentRegistry } from './registry.js';
 import { RelayEngine } from './relay.js';
 import type {
@@ -27,6 +30,7 @@ import type {
 export interface HubOptions {
     port: number;
     verbose?: boolean;
+    team?: string;
 }
 
 // --- Queued message for idle-aware delivery ---
@@ -36,16 +40,61 @@ interface QueuedMessage {
 }
 
 export function startHub(options: HubOptions): WebSocketServer {
-    const { port, verbose = false } = options;
+    const { port, verbose = false, team = 'default' } = options;
     const registry = new AgentRegistry(verbose);
     const relay = new RelayEngine(registry, verbose);
 
+    // --- Persistence ---
+    const stateDir = join(homedir(), '.vibehq', 'teams', team);
+    const stateFile = join(stateDir, 'hub-state.json');
+
+    interface HubState {
+        teamUpdates: Record<string, TeamUpdate[]>;
+        tasks: Record<string, TaskState>;
+        artifacts: Record<string, ArtifactMeta>;
+        contracts: Record<string, ContractState>;
+    }
+
+    function loadState(): HubState {
+        try {
+            if (existsSync(stateFile)) {
+                const raw = readFileSync(stateFile, 'utf-8');
+                return JSON.parse(raw);
+            }
+        } catch (err) {
+            if (verbose) console.log(`[Hub] Could not load state: ${(err as Error).message}`);
+        }
+        return { teamUpdates: {}, tasks: {}, artifacts: {}, contracts: {} };
+    }
+
+    function saveState(): void {
+        try {
+            if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
+            const state: HubState = {
+                teamUpdates: Object.fromEntries(teamUpdates),
+                tasks: Object.fromEntries(taskStore),
+                artifacts: Object.fromEntries(artifactStore),
+                contracts: Object.fromEntries(contractStore),
+            };
+            writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf-8');
+        } catch (err) {
+            if (verbose) console.error(`[Hub] Could not save state: ${(err as Error).message}`);
+        }
+    }
+
+    // Load persisted state
+    const saved = loadState();
+
     // --- Stores ---
-    const teamUpdates: Map<string, TeamUpdate[]> = new Map();
-    const taskStore: Map<string, TaskState> = new Map();
-    const artifactStore: Map<string, ArtifactMeta> = new Map();
-    const contractStore: Map<string, ContractState> = new Map();
-    const messageQueue: Map<string, QueuedMessage[]> = new Map(); // agentId → queued messages
+    const teamUpdates: Map<string, TeamUpdate[]> = new Map(Object.entries(saved.teamUpdates));
+    const taskStore: Map<string, TaskState> = new Map(Object.entries(saved.tasks));
+    const artifactStore: Map<string, ArtifactMeta> = new Map(Object.entries(saved.artifacts));
+    const contractStore: Map<string, ContractState> = new Map(Object.entries(saved.contracts));
+    const messageQueue: Map<string, QueuedMessage[]> = new Map(); // NOT persisted
+
+    if (verbose) {
+        console.log(`[Hub] Loaded state: ${taskStore.size} tasks, ${artifactStore.size} artifacts, ${contractStore.size} contracts`);
+    }
 
     // --- Idle-aware delivery helpers ---
     function queueOrDeliver(targetName: string, team: string, payload: any): boolean {
@@ -201,6 +250,7 @@ export function startHub(options: HubOptions): WebSocketServer {
                     if (verbose) {
                         console.log(`[Hub] Update from ${poster.name} (${team}): ${msg.message.substring(0, 80)}`);
                     }
+                    saveState();
                     break;
                 }
 
@@ -257,6 +307,7 @@ export function startHub(options: HubOptions): WebSocketServer {
                     });
 
                     if (verbose) console.log(`[Hub] Task ${taskId}: ${creator.name} → ${msg.assignee} "${msg.title}"`);
+                    saveState();
                     break;
                 }
 
@@ -283,6 +334,7 @@ export function startHub(options: HubOptions): WebSocketServer {
                     });
 
                     if (verbose) console.log(`[Hub] Task ${msg.taskId}: ${msg.accepted ? 'accepted' : 'rejected'} by ${agent.name}`);
+                    saveState();
                     break;
                 }
 
@@ -311,6 +363,7 @@ export function startHub(options: HubOptions): WebSocketServer {
                     }
 
                     if (verbose) console.log(`[Hub] Task ${msg.taskId}: ${msg.status} by ${agent.name}`);
+                    saveState();
                     break;
                 }
 
@@ -338,6 +391,7 @@ export function startHub(options: HubOptions): WebSocketServer {
                     });
 
                     if (verbose) console.log(`[Hub] Task ${msg.taskId}: completed by ${agent.name}, artifact: ${msg.artifact}`);
+                    saveState();
                     break;
                 }
 
@@ -388,6 +442,7 @@ export function startHub(options: HubOptions): WebSocketServer {
                     } satisfies ArtifactChangedBroadcast);
 
                     if (verbose) console.log(`[Hub] Artifact ${action}: ${msg.filename} by ${agent.name}`);
+                    saveState();
                     break;
                 }
 
@@ -436,6 +491,7 @@ export function startHub(options: HubOptions): WebSocketServer {
                     }
 
                     if (verbose) console.log(`[Hub] Contract published: ${msg.specPath} by ${agent.name}, needs: ${msg.requiredSigners.join(', ')}`);
+                    saveState();
                     break;
                 }
 
@@ -485,6 +541,7 @@ export function startHub(options: HubOptions): WebSocketServer {
                     }
 
                     if (verbose) console.log(`[Hub] Contract signed: ${msg.specPath} by ${agent.name}${allSigned ? ' → APPROVED' : ''}`);
+                    saveState();
                     break;
                 }
 
