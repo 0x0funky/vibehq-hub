@@ -85,15 +85,15 @@ VibeHQ は既存の機能の**上に** 20 のコラボレーションツール�
 
 #### チームメイト一覧 — オンライン中のメンバーとステータスを確認
 
-https://github.com/user-attachments/assets/5f631c4a-ba50-428a-9f8a-ac1de890a6a8
+https://github.com/user-attachments/assets/b4e20201-dc32-4ab4-b5fe-84b165d44e23
 
 #### チームメイト会話 — リアルタイムエージェント間コミュニケーション
 
-https://github.com/user-attachments/assets/e114cc9c-b468-4367-9f6f-4d855ee06abf
+https://github.com/user-attachments/assets/ea254931-9981-4eb6-8db3-44480ec88041
 
 #### タスク割り当て — PM がタスクを作成しエンジニアに割り当て
 
-https://github.com/user-attachments/assets/ba2cdb27-ef29-456c-bbf7-02a157d5aaf8
+https://github.com/user-attachments/assets/909834e4-c28a-421e-8144-eda90040a091
 
 ---
 
