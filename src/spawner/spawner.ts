@@ -37,6 +37,7 @@ export interface SpawnerOptions {
     command: string;
     args: string[];
     systemPrompt?: string;
+    dangerouslySkipPermissions?: boolean;
 }
 
 export class AgentSpawner {
@@ -239,6 +240,10 @@ export class AgentSpawner {
         let spawnArgs = [...args];
         if (systemPrompt && (cmd === 'claude' || cmd.includes('claude'))) {
             spawnArgs.push('--append-system-prompt', systemPrompt);
+        }
+        // Add --dangerously-skip-permissions for Claude if enabled
+        if (this.options.dangerouslySkipPermissions && (cmd === 'claude' || cmd.includes('claude'))) {
+            spawnArgs.push('-y', '--dangerously-skip-permissions');
         }
 
         this.ptyProcess = pty.spawn(resolvedCommand, spawnArgs, {
