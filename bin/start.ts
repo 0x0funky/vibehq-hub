@@ -6,6 +6,7 @@ import { startHub } from '../src/hub/server.js';
 import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { exec } from 'child_process';
 import { createServer } from 'net';
+import { tmpdir } from 'os';
 import type { WebSocketServer } from 'ws';
 import { c, screen, cursor } from '../src/tui/renderer.js';
 import { welcomeScreen } from '../src/tui/screens/welcome.js';
@@ -177,10 +178,13 @@ function detectLinuxTerminal(): string | null {
 
 // --- Spawn one agent in a new terminal window ---
 function spawnOneAgent(agent: AgentConfig, team: TeamConfig, hubUrl: string): void {
-    // Escape system prompt for shell arg (replace " with \")
-    const sysPromptArg = agent.systemPrompt
-        ? ` --system-prompt "${agent.systemPrompt.replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`
-        : '';
+    // Write system prompt to temp file if present (avoids shell escaping issues)
+    let sysPromptArg = '';
+    if (agent.systemPrompt) {
+        const tmpFile = `${tmpdir()}/vibehq-prompt-${agent.name.replace(/\s/g, '_')}-${Date.now()}.md`;
+        writeFileSync(tmpFile, agent.systemPrompt);
+        sysPromptArg = ` --system-prompt-file "${tmpFile}"`;
+    }
     const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}"${sysPromptArg} -- ${agent.cli}`;
     const safeCmd = spawnCmd.replace(/'/g, "'\\''");
 

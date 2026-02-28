@@ -1,6 +1,6 @@
 import * as pty from 'node-pty';
 import { execSync } from 'child_process';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import WebSocket from 'ws';
@@ -54,15 +54,61 @@ export class AgentSpawner {
         this.spawnCli();
         await this.connectToHub();
 
-        // Inject system prompt after CLI has started up
-        if (this.options.systemPrompt && this.ptyProcess) {
-            const delay = this.options.command.includes('codex') ? 5000 : 3000;
-            setTimeout(() => {
-                if (this.ptyProcess && this.options.systemPrompt) {
-                    const prompt = this.options.systemPrompt.trim();
-                    this.ptyProcess.write(prompt + '\r');
+        // Inject system prompt using CLI-native mechanisms
+        if (this.options.systemPrompt) {
+            this.injectSystemPrompt();
+        }
+    }
+
+    /**
+     * Inject system prompt using the correct mechanism for each CLI.
+     * - Claude: --append-system-prompt flag (added to spawn args)
+     * - Codex: writes codex.md in project root
+     * - Gemini: writes .gemini/GEMINI.md in project root
+     */
+    private injectSystemPrompt(): void {
+        const { command, systemPrompt } = this.options;
+        if (!systemPrompt) return;
+        const cmd = command.toLowerCase();
+
+        if (cmd === 'claude' || cmd.includes('claude')) {
+            // Claude: handled via spawn args in spawnCli()
+            // Nothing to do here — args already added
+        } else if (cmd === 'codex' || cmd.includes('codex')) {
+            // Codex: write codex.md in project root (cwd)
+            const codexMdPath = join(process.cwd(), 'codex.md');
+            const marker = '<!-- vibehq-system-prompt -->';
+            let existing = '';
+            if (existsSync(codexMdPath)) {
+                existing = readFileSync(codexMdPath, 'utf-8');
+                // Remove previous VibHQ block if present
+                const markerIdx = existing.indexOf(marker);
+                if (markerIdx >= 0) {
+                    existing = existing.substring(0, markerIdx).trimEnd();
                 }
-            }, delay);
+            }
+            const vibehqBlock = `\n\n${marker}\n## VibHQ Agent Instructions\n\n${systemPrompt}\n`;
+            writeFileSync(codexMdPath, existing + vibehqBlock);
+            console.error(`[Spawner] System prompt written to ${codexMdPath}`);
+        } else if (cmd === 'gemini' || cmd.includes('gemini')) {
+            // Gemini: write .gemini/GEMINI.md in project root (cwd)
+            const geminiDir = join(process.cwd(), '.gemini');
+            if (!existsSync(geminiDir)) {
+                mkdirSync(geminiDir, { recursive: true });
+            }
+            const geminiMdPath = join(geminiDir, 'GEMINI.md');
+            const marker = '<!-- vibehq-system-prompt -->';
+            let existing = '';
+            if (existsSync(geminiMdPath)) {
+                existing = readFileSync(geminiMdPath, 'utf-8');
+                const markerIdx = existing.indexOf(marker);
+                if (markerIdx >= 0) {
+                    existing = existing.substring(0, markerIdx).trimEnd();
+                }
+            }
+            const vibehqBlock = `\n\n${marker}\n## VibHQ Agent Instructions\n\n${systemPrompt}\n`;
+            writeFileSync(geminiMdPath, existing + vibehqBlock);
+            console.error(`[Spawner] System prompt written to ${geminiMdPath}`);
         }
     }
 
@@ -170,12 +216,19 @@ export class AgentSpawner {
     }
 
     private spawnCli(): void {
-        const { command, args } = this.options;
+        const { command, args, systemPrompt } = this.options;
         const resolvedCommand = resolveCommand(command);
         const cols = process.stdout.columns || 80;
         const rows = process.stdout.rows || 24;
+        const cmd = command.toLowerCase();
 
-        this.ptyProcess = pty.spawn(resolvedCommand, args, {
+        // Build spawn args — append system prompt flag for Claude
+        let spawnArgs = [...args];
+        if (systemPrompt && (cmd === 'claude' || cmd.includes('claude'))) {
+            spawnArgs.push('--append-system-prompt', systemPrompt);
+        }
+
+        this.ptyProcess = pty.spawn(resolvedCommand, spawnArgs, {
             name: 'xterm-color',
             cols,
             rows,

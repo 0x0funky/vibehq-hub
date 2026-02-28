@@ -3,6 +3,7 @@
 // ============================================================
 
 import { AgentSpawner } from '../src/spawner/spawner.js';
+import { readFileSync } from 'fs';
 
 function printHelp() {
     console.log(`
@@ -17,7 +18,8 @@ Options:
   -u, --hub <url>              Hub WebSocket URL (default: ws://localhost:3001)
       --team <string>          Team name (default: "default")
   -t, --timeout <ms>           Response timeout in ms (default: 120000)
-      --system-prompt <text>   System prompt to inject on startup
+      --system-prompt <text>   System prompt text
+      --system-prompt-file <f> Read system prompt from a file
   -h, --help                   Show help
 
 Examples:
@@ -76,6 +78,14 @@ function parseArgs(): { name: string; role: string; hub: string; team: string; t
             case '--system-prompt':
                 systemPrompt = ourArgs[++i];
                 break;
+            case '--system-prompt-file': {
+                const filePath = ourArgs[++i];
+                try { systemPrompt = readFileSync(filePath, 'utf-8'); } catch (e) {
+                    console.error(`Error: cannot read system prompt file: ${filePath}`);
+                    process.exit(1);
+                }
+                break;
+            }
             case '-h':
             case '--help':
                 printHelp();

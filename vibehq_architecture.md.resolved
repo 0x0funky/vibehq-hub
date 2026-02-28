@@ -1,0 +1,224 @@
+# VibHQ Architecture Overview
+
+## System Architecture
+
+```mermaid
+graph TB
+    subgraph TUI["vibehq CLI (TUI)"]
+        W["Welcome Screen"]
+        CT["Create Team"]
+        ST["Start Team"]
+        DB["Dashboard"]
+        SET["Settings"]
+    end
+
+    subgraph Hub["Hub Server (WebSocket)"]
+        REG["AgentRegistry"]
+        RELAY["RelayEngine"]
+        UPDATES["TeamUpdates Store"]
+    end
+
+    subgraph Agents["Per-Agent Process"]
+        SPAWN["AgentSpawner (PTY wrapper)"]
+        MCP["MCP Server (stdio)"]
+        CLI["CLI (claude/gemini/codex)"]
+    end
+
+    subgraph Shared["File System"]
+        SF["~/.vibehq/teams/{team}/shared/"]
+    end
+
+    ST -->|"startHub()"| Hub
+    ST -->|"exec wt/tmux"| SPAWN
+    DB -->|"viewer:connect"| Hub
+    SPAWN -->|"spawner:subscribe"| Hub
+    MCP -->|"agent:register"| Hub
+    CLI -->|"MCP tool call"| MCP
+    MCP -->|"hub.ask/assign/reply/postUpdate"| Hub
+    RELAY -->|"relay:question/task/reply"| MCP
+    MCP -->|"read/write"| SF
+```
+
+---
+
+## 1. Hub Server (`src/hub/`)
+
+Central WebSocket server managing all agent connections and message routing.
+
+### Components
+
+| File | Role |
+|------|------|
+| [server.ts](file:///d:/agent-hub/src/hub/server.ts) | WebSocket server setup, message dispatch |
+| [registry.ts](file:///d:/agent-hub/src/hub/registry.ts) | Agent registration, status tracking, broadcast |
+| [relay.ts](file:///d:/agent-hub/src/hub/relay.ts) | Message routing between agents |
+| [types.ts](file:///d:/agent-hub/src/hub/types.ts) | ConnectedAgent, ConnectedViewer types |
+
+### Agent Registry
+- Registers agents with UUID, tracks `name`, `role`, `capabilities`, `status`, `team`
+- Maintains spawner subscriptions (PTY wrappers shadow their CLI's MCP agent)
+- Viewer connections (dashboard) receive broadcasts but don't participate
+- Broadcasts: `agent:status:broadcast`, `agent:disconnected`
+
+### Relay Engine
+- **`handleAsk`**: Routes `relay:ask` → finds target by name → sends `relay:question` to target + spawners → stores pending request → broadcasts `relay:start`
+- **`handleAnswer`**: Matches `relay:answer` to pending request → sends `relay:response` back to asker → broadcasts `relay:done`
+- **`handleAssign`**: Routes `relay:assign` → sends `relay:task` to target + spawners → immediately broadcasts `relay:done` (fire-and-forget)
+- **`handleReply`**: Routes `relay:reply` → sends `relay:reply:delivered` to target + spawners
+
+### Team Updates Store
+- In-memory array of `{ from, message, timestamp }` per team
+- `team:update:post` → stores + broadcasts `team:update:broadcast` to all
+- `team:update:list` → returns recent N updates
+
+---
+
+## 2. MCP Server (`src/mcp/`)
+
+Per-agent MCP server running over stdio, connected to CLI (claude/gemini/codex).
+
+### Hub Client ([hub-client.ts](file:///d:/agent-hub/src/mcp/hub-client.ts))
+- WebSocket connection to Hub, auto-reconnect on disconnect
+- Maintains local teammates cache (updated via broadcasts)
+- Methods: `ask()`, `assign()`, `reply()`, `postUpdate()`, `getUpdates()`, `updateStatus()`, `sendAnswer()`
+
+---
+
+## 3. MCP Tools (10 total)
+
+| # | Tool Name | File | Description | Hub Needed? |
+|---|-----------|------|-------------|-------------|
+| 1 | `list_teammates` | [list-teammates.ts](file:///d:/agent-hub/src/mcp/tools/list-teammates.ts) | List all teammates with name, role, status | Yes (local cache) |
+| 2 | `ask_teammate` | [ask-teammate.ts](file:///d:/agent-hub/src/mcp/tools/ask-teammate.ts) | Send async question to a teammate (fire-and-forget) | Yes |
+| 3 | `assign_task` | [assign-task.ts](file:///d:/agent-hub/src/mcp/tools/assign-task.ts) | Assign task with priority (fire-and-forget) | Yes |
+| 4 | `check_status` | [check-status.ts](file:///d:/agent-hub/src/mcp/tools/check-status.ts) | Check one or all teammates' status (idle/working/busy) | Yes (local cache) |
+| 5 | `reply_to_team` | [reply-to-team.ts](file:///d:/agent-hub/src/mcp/tools/reply-to-team.ts) | Send async reply/message to a teammate | Yes |
+| 6 | `post_update` | [team-updates.ts](file:///d:/agent-hub/src/mcp/tools/team-updates.ts) | Broadcast progress update to everyone | Yes |
+| 7 | `get_team_updates` | [team-updates.ts](file:///d:/agent-hub/src/mcp/tools/team-updates.ts) | Read recent team updates (bulletin board) | Yes |
+| 8 | `share_file` | [share-file.ts](file:///d:/agent-hub/src/mcp/tools/share-file.ts) | Write file to `~/.vibehq/teams/{team}/shared/` | No (local filesystem) |
+| 9 | `read_shared_file` | [share-file.ts](file:///d:/agent-hub/src/mcp/tools/share-file.ts) | Read file from shared folder | No (local filesystem) |
+| 10 | `list_shared_files` | [share-file.ts](file:///d:/agent-hub/src/mcp/tools/share-file.ts) | List all shared files with size + modified date | No (local filesystem) |
+
+### Tool Communication Patterns
+
+```mermaid
+sequenceDiagram
+    participant PM as PM (Alex)
+    participant Hub
+    participant FE as Frontend (Jordan)
+
+    Note over PM: ask_teammate
+    PM->>Hub: relay:ask {to: "Jordan", question: "..."}
+    Hub->>FE: relay:question {from: "Alex", question: "..."}
+    Note over FE: Injected into CLI stdin by Spawner
+    FE->>Hub: relay:answer {requestId, answer: "..."}
+    Hub->>PM: relay:response {from: "Jordan", answer: "..."}
+
+    Note over PM: assign_task (fire-and-forget)
+    PM->>Hub: relay:assign {to: "Jordan", task: "...", priority: "high"}
+    Hub->>FE: relay:task {from: "Alex", task: "...", priority: "high"}
+    Note over Hub: Immediately broadcasts relay:done
+```
+
+---
+
+## 4. Spawner (`src/spawner/spawner.ts`)
+
+PTY wrapper that bridges the CLI agent with the Hub.
+
+### Responsibilities
+1. **Spawns CLI** via `node-pty` (pseudo-terminal)
+2. **Auto-configures MCP**: Writes MCP config to `~/.claude.json` / Gemini / Codex config files so the CLI can discover VibHQ tools
+3. **Connects to Hub** via WebSocket as `spawner:subscribe`
+4. **Injects messages** into CLI stdin when `relay:question` or `relay:task` arrives from Hub
+5. **Monitors PTY output** for status detection (idle/working)
+6. **System prompt injection**: Writes system prompt into CLI stdin after 3s startup delay
+
+### Message Injection Format
+When a teammate's message arrives, the spawner writes this into the CLI's stdin:
+```
+[VibHQ Team Message from {name} ({role})]: {message content}
+```
+
+---
+
+## 5. TUI Screens (`src/tui/`)
+
+| Screen | File | Function |
+|--------|------|----------|
+| Welcome | [welcome.ts](file:///d:/agent-hub/src/tui/screens/welcome.ts) | Main menu: Start / Create / Dashboard / Settings / Quit |
+| Create Team | [create-team.ts](file:///d:/agent-hub/src/tui/screens/create-team.ts) | Wizard: name → port → agents (role selector + systemPrompt) |
+| Dashboard | [dashboard.ts](file:///d:/agent-hub/src/tui/screens/dashboard.ts) | Live agent status, message log, [q] to quit |
+| Settings | [settings.ts](file:///d:/agent-hub/src/tui/screens/settings.ts) | Edit port, agents, open config in editor |
+
+---
+
+## 6. Config Format (`vibehq.config.json`)
+
+```json
+{
+    "teams": [
+        {
+            "name": "TeamName",
+            "hub": { "port": 3001 },
+            "agents": [
+                {
+                    "name": "Alex",
+                    "role": "Project Manager",
+                    "cli": "codex",
+                    "cwd": "D:\\project",
+                    "systemPrompt": "You are a Project Manager..."
+                }
+            ]
+        }
+    ]
+}
+```
+
+---
+
+## 7. Protocol Messages Summary
+
+| Direction | Message Type | Purpose |
+|-----------|-------------|---------|
+| Agent → Hub | `agent:register` | Register with name, role, team |
+| Hub → Agent | `agent:registered` | Confirm registration, send teammate list |
+| Agent → Hub | `agent:status` | Update own status (idle/working/busy) |
+| Hub → All | `agent:status:broadcast` | Broadcast agent status change |
+| Hub → All | `agent:disconnected` | Agent left |
+| Agent → Hub | `relay:ask` | Send question to specific agent |
+| Hub → Agent | `relay:question` | Deliver question to target |
+| Agent → Hub | `relay:answer` | Answer a pending question |
+| Hub → Agent | `relay:response` | Deliver answer back to asker |
+| Agent → Hub | `relay:assign` | Assign task to agent (fire-and-forget) |
+| Hub → Agent | `relay:task` | Deliver task assignment |
+| Agent → Hub | `relay:reply` | Send async message to agent |
+| Hub → Agent | `relay:reply:delivered` | Deliver reply to target |
+| Hub → All | `relay:start` / `relay:done` | Conversation event markers |
+| Agent → Hub | `team:update:post` | Post progress update |
+| Hub → All | `team:update:broadcast` | Broadcast update to team |
+| Agent → Hub | `team:update:list` | Request recent updates |
+| Hub → Agent | `team:update:list:response` | Return updates list |
+| Spawner → Hub | `spawner:subscribe` | Shadow an agent's messages |
+| Hub → Spawner | `spawner:subscribed` | Confirm, send teammates |
+| Viewer → Hub | `viewer:connect` | Dashboard connection |
+
+---
+
+## 8. Current Gaps & Improvement Opportunities
+
+### Communication
+- **No idle-aware delivery**: Messages delivered immediately regardless of target status
+- **No message queue**: If target is working, message may be lost/delayed in CLI buffer
+- **No acknowledgement**: `assign_task` has no "received"/"done" signal mechanism
+
+### Coordination
+- **No phase/state tracking**: Hub has no concept of project phases (planning/contracting/coding)
+- **No task state machine**: Tasks are fire-and-forget with no status tracking
+- **No contract/approval mechanism**: No way to enforce "X must happen before Y"
+- **No file change notifications**: Shared files are passive — no event when updated
+
+### Observability
+- **Dashboard shows status only**: No task board, no message log, no phase display
+- **No structured task tracking**: assign_task returns a taskId but it's never tracked
+- **No update categorization**: post_update is free text, no type/priority
