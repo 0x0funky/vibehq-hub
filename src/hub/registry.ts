@@ -132,6 +132,13 @@ export class AgentRegistry {
         return result;
     }
 
+    /**
+     * Get spawner info (name + team) by WS connection.
+     */
+    getSpawnerInfo(ws: WebSocket): { name: string; team: string } | undefined {
+        return this.spawners.get(ws);
+    }
+
     private statusCallbacks: ((agentId: string, status: AgentStatus) => void)[] = [];
 
     /**

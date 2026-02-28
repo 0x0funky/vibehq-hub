@@ -143,9 +143,23 @@ export function startHub(options: HubOptions): WebSocketServer {
                     break;
                 }
 
-                case 'agent:status':
-                    registry.updateStatus(ws, msg.status);
+                case 'agent:status': {
+                    // Accept status updates from both agents and spawners
+                    const directAgent = registry.getAgentByWs(ws);
+                    if (directAgent) {
+                        registry.updateStatus(ws, msg.status);
+                    } else {
+                        // Check if this is from a spawner — update the shadowed agent
+                        const spawnerInfo = registry.getSpawnerInfo(ws);
+                        if (spawnerInfo) {
+                            const agent = registry.getAgentByName(spawnerInfo.name, spawnerInfo.team);
+                            if (agent) {
+                                registry.updateStatus(agent.ws, msg.status);
+                            }
+                        }
+                    }
                     break;
+                }
 
                 case 'viewer:connect':
                     registry.registerViewer(ws);
