@@ -56,35 +56,54 @@
                     "role": "Frontend Engineer",
                     "cli": "claude",
                     "cwd": "D:\\medvault\\frontend",
-                    "dangerouslySkipPermissions": true
+                    "dangerouslySkipPermissions": true,
+                    "additionalDirs": [
+                        "D:\\medvault\\mock-data"
+                    ]
                 },
                 {
                     "name": "Taylor",
                     "role": "Frontend Engineer",
                     "cli": "claude",
                     "cwd": "D:\\medvault\\imaging",
-                    "dangerouslySkipPermissions": true
+                    "dangerouslySkipPermissions": true,
+                    "additionalDirs": [
+                        "D:\\medvault\\mock-data"
+                    ]
                 },
                 {
                     "name": "Riley",
                     "role": "Backend Engineer",
                     "cli": "claude",
                     "cwd": "D:\\medvault\\backend",
-                    "dangerouslySkipPermissions": true
+                    "dangerouslySkipPermissions": true,
+                    "additionalDirs": [
+                        "D:\\medvault\\mock-data"
+                    ]
                 },
                 {
                     "name": "Morgan",
                     "role": "AI Engineer",
                     "cli": "claude",
                     "cwd": "D:\\medvault\\ai",
-                    "dangerouslySkipPermissions": true
+                    "dangerouslySkipPermissions": true,
+                    "additionalDirs": [
+                        "D:\\medvault\\mock-data"
+                    ]
                 },
                 {
                     "name": "Casey",
                     "role": "QA Engineer",
                     "cli": "claude",
                     "cwd": "D:\\medvault\\qa",
-                    "dangerouslySkipPermissions": true
+                    "dangerouslySkipPermissions": true,
+                    "additionalDirs": [
+                        "D:\\medvault\\frontend",
+                        "D:\\medvault\\backend",
+                        "D:\\medvault\\imaging",
+                        "D:\\medvault\\ai",
+                        "D:\\medvault\\mock-data"
+                    ]
                 }
             ]
         }

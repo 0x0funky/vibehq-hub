@@ -38,6 +38,7 @@ export interface SpawnerOptions {
     args: string[];
     systemPrompt?: string;
     dangerouslySkipPermissions?: boolean;
+    additionalDirs?: string[];
 }
 
 export class AgentSpawner {
@@ -244,6 +245,12 @@ export class AgentSpawner {
         // Add --dangerously-skip-permissions for Claude if enabled
         if (this.options.dangerouslySkipPermissions && (cmd === 'claude' || cmd.includes('claude'))) {
             spawnArgs.push('-y', '--dangerously-skip-permissions');
+        }
+        // Add --add-dir flags for Claude
+        if (this.options.additionalDirs?.length && (cmd === 'claude' || cmd.includes('claude'))) {
+            for (const dir of this.options.additionalDirs) {
+                spawnArgs.push('--add-dir', dir);
+            }
         }
 
         this.ptyProcess = pty.spawn(resolvedCommand, spawnArgs, {

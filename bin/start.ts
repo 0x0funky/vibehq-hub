@@ -52,6 +52,7 @@ interface AgentConfig {
     cwd: string;
     systemPrompt?: string;
     dangerouslySkipPermissions?: boolean;
+    additionalDirs?: string[];
 }
 
 interface TeamConfig {
@@ -189,7 +190,8 @@ function spawnOneAgent(agent: AgentConfig, team: TeamConfig, hubUrl: string): vo
         sysPromptArg = ` --system-prompt-file "${tmpFile}"`;
     }
     const skipPermsArg = agent.dangerouslySkipPermissions ? ' --skip-permissions' : '';
-    const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}"${sysPromptArg}${skipPermsArg} -- ${agent.cli}`;
+    const addDirsArg = agent.additionalDirs?.map(d => ` --add-dir "${d}"`).join('') || '';
+    const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}"${sysPromptArg}${skipPermsArg}${addDirsArg} -- ${agent.cli}`;
     const safeCmd = spawnCmd.replace(/'/g, "'\\''");
 
     if (process.platform === 'win32') {
