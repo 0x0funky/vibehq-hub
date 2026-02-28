@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/vibehq_index.png" alt="VibHQ" width="100%" />
+  <img src="images/vibehq_index.png" alt="VibeHQ" width="100%" />
 </p>
 
 <p align="center">
@@ -9,7 +9,7 @@
   <a href="README.ja.md">日本語</a>
 </p>
 
-<h1 align="center">⚡ VibHQ</h1>
+<h1 align="center">⚡ VibeHQ</h1>
 
 <p align="center">
   <strong>Multi-Agent AI Collaboration Platform</strong><br/>
@@ -50,7 +50,7 @@ Every serious project needs a PM to coordinate, a designer to spec the UI, a bac
 
 ## 💡 The Solution
 
-VibHQ takes a fundamentally different approach: **real CLI agents, real terminals, real collaboration.**
+VibeHQ takes a fundamentally different approach: **real CLI agents, real terminals, real collaboration.**
 
 ```
 You give ONE prompt to the PM.
@@ -67,19 +67,19 @@ Every agent is a **real instance** of Claude Code, Codex CLI, or Gemini CLI — 
 - 🔧 **Codex CLI**: Built-in tools, file editing, terminal commands, custom instructions
 - 🔧 **Gemini CLI**: Extensions, Google Cloud integrations, `.gemini/` config
 
-VibHQ **adds** 20 collaboration tools on top — it never replaces or limits anything the CLI can already do. Your agents keep their full power; they just gain the ability to talk to each other.
+VibeHQ **adds** 20 collaboration tools on top — it never replaces or limits anything the CLI can already do. Your agents keep their full power; they just gain the ability to talk to each other.
 
 **This is the difference between "multi-agent" and "multi-agent collaboration."**
 
 <p align="center">
-  <img src="images/vibehq_dashboard.png" alt="VibHQ Dashboard" width="100%" />
+  <img src="images/vibehq_dashboard.png" alt="VibeHQ Dashboard" width="100%" />
 </p>
 
 ---
 
 ## 🎥 See It in Action
 
-> 🎬 **[Watch the full 7-agent collaboration demo →](https://drive.google.com/file/d/1Ee4R3DzUS0PVO6-2YUnYVVDR-jv4UvmO/view?usp=sharing)**
+> 🎬 **[Watch the full 7-agent collaboration demo →](https://drive.google.com/file/d/1zzY3f8iCthb_s240rV67uiA9VpskZr2s/view?usp=sharing)**
 
 ### MCP Tools in Action
 
@@ -217,7 +217,7 @@ vibehq-spawn --name "Casey" --role "QA Engineer" \
 
 ## ⚠️ Platform Support
 
-> **VibHQ is currently developed and tested on Windows.**
+> **VibeHQ is currently developed and tested on Windows.**
 > Mac and Linux support is planned and architecturally supported, but has not been fully tested yet.
 
 | Feature | Windows | Mac | Linux |
@@ -245,7 +245,7 @@ vibehq-spawn --name "Casey" --role "QA Engineer" \
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                      VibHQ Hub                           │
+│                      VibeHQ Hub                           │
 │                  (WebSocket Server)                      │
 │                                                          │
 │  ┌─────────┐  ┌──────────┐  ┌───────────┐  ┌─────────┐ │
@@ -329,7 +329,7 @@ vibehq-spawn --name "Casey" --role "QA Engineer" \
 
 ### Built-in Role Presets
 
-When `systemPrompt` is omitted, VibHQ auto-loads a V2-aware prompt based on the `role` field:
+When `systemPrompt` is omitted, VibeHQ auto-loads a V2-aware prompt based on the `role` field:
 
 | Role | Focus |
 |------|-------|

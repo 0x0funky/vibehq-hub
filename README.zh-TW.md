@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/vibehq_index.png" alt="VibHQ" width="100%" />
+  <img src="images/vibehq_index.png" alt="VibeHQ" width="100%" />
 </p>
 
 <p align="center">
@@ -9,7 +9,7 @@
   <a href="README.ja.md">日本語</a>
 </p>
 
-<h1 align="center">⚡ VibHQ</h1>
+<h1 align="center">⚡ VibeHQ</h1>
 
 <p align="center">
   <strong>多 Agent AI 協作平台</strong><br/>
@@ -50,7 +50,7 @@
 
 ## 💡 解決方案
 
-VibHQ 採用根本不同的方式：**真正的 CLI agent，真正的終端，真正的協作。**
+VibeHQ 採用根本不同的方式：**真正的 CLI agent，真正的終端，真正的協作。**
 
 ```
 你給 PM 一個提示。
@@ -67,19 +67,19 @@ VibHQ 採用根本不同的方式：**真正的 CLI agent，真正的終端，�
 - 🔧 **Codex CLI**：內建工具、檔案編輯、終端指令、自訂指示
 - 🔧 **Gemini CLI**：Extensions、Google Cloud 整合、`.gemini/` 設定
 
-VibHQ **在既有功能之上添加** 20 個協作工具 — 永遠不替換或限制 CLI 本身的能力。你的 agent 保有完整的能力；它們只是多了與彼此溝通的能力。
+VibeHQ **在既有功能之上添加** 20 個協作工具 — 永遠不替換或限制 CLI 本身的能力。你的 agent 保有完整的能力；它們只是多了與彼此溝通的能力。
 
 **這就是「multi-agent」和「multi-agent 協作」的差異。**
 
 <p align="center">
-  <img src="images/vibehq_dashboard.png" alt="VibHQ Dashboard" width="100%" />
+  <img src="images/vibehq_dashboard.png" alt="VibeHQ Dashboard" width="100%" />
 </p>
 
 ---
 
 ## 🎥 實際運作展示
 
-> 🎬 **[觀看完整的 7 個 Agent 協作展示 →](https://drive.google.com/file/d/1Ee4R3DzUS0PVO6-2YUnYVVDR-jv4UvmO/view?usp=sharing)**
+> 🎬 **[觀看完整的 7 個 Agent 協作展示 →](https://drive.google.com/file/d/1zzY3f8iCthb_s240rV67uiA9VpskZr2s/view?usp=sharing)**
 
 ### MCP 工具實際運作
 
@@ -217,7 +217,7 @@ vibehq-spawn --name "Casey" --role "QA Engineer" \
 
 ## ⚠️ 平台支援
 
-> **VibHQ 目前在 Windows 上開發和測試。**
+> **VibeHQ 目前在 Windows 上開發和測試。**
 > Mac 和 Linux 支援在架構上已支援，但尚未完整測試。
 
 | 功能 | Windows | Mac | Linux |
@@ -245,7 +245,7 @@ vibehq-spawn --name "Casey" --role "QA Engineer" \
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                      VibHQ Hub                           │
+│                      VibeHQ Hub                           │
 │                 （WebSocket 伺服器）                       │
 │                                                          │
 │  ┌─────────┐  ┌──────────┐  ┌───────────┐  ┌─────────┐ │

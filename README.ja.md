@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/vibehq_index.png" alt="VibHQ" width="100%" />
+  <img src="images/vibehq_index.png" alt="VibeHQ" width="100%" />
 </p>
 
 <p align="center">
@@ -9,7 +9,7 @@
   日本語
 </p>
 
-<h1 align="center">⚡ VibHQ</h1>
+<h1 align="center">⚡ VibeHQ</h1>
 
 <p align="center">
   <strong>マルチエージェント AI コラボレーションプラットフォーム</strong><br/>
@@ -50,7 +50,7 @@
 
 ## 💡 解決策
 
-VibHQ は根本的に異なるアプローチを取ります：**本物の CLI エージェント、本物のターミナル、本物のコラボレーション。**
+VibeHQ は根本的に異なるアプローチを取ります：**本物の CLI エージェント、本物のターミナル、本物のコラボレーション。**
 
 ```
 PM に一つのプロンプトを与える。
@@ -67,19 +67,19 @@ PM に一つのプロンプトを与える。
 - 🔧 **Codex CLI**：内蔵ツール、ファイル編集、ターミナルコマンド、カスタム指示
 - 🔧 **Gemini CLI**：Extensions、Google Cloud 統合、`.gemini/` 設定
 
-VibHQ は既存の機能の**上に** 20 のコラボレーションツールを追加します — CLI 自体の機能を置き換えたり制限したりすることはありません。エージェントはフルパワーを保持し、互いにコミュニケーションする能力を獲得するだけです。
+VibeHQ は既存の機能の**上に** 20 のコラボレーションツールを追加します — CLI 自体の機能を置き換えたり制限したりすることはありません。エージェントはフルパワーを保持し、互いにコミュニケーションする能力を獲得するだけです。
 
 **これが「マルチエージェント」と「マルチエージェントコラボレーション」の違いです。**
 
 <p align="center">
-  <img src="images/vibehq_dashboard.png" alt="VibHQ Dashboard" width="100%" />
+  <img src="images/vibehq_dashboard.png" alt="VibeHQ Dashboard" width="100%" />
 </p>
 
 ---
 
 ## 🎥 実際の動作
 
-> 🎬 **[完全な 7 エージェントコラボレーションデモを見る →](https://drive.google.com/file/d/1Ee4R3DzUS0PVO6-2YUnYVVDR-jv4UvmO/view?usp=sharing)**
+> 🎬 **[完全な 7 エージェントコラボレーションデモを見る →](https://drive.google.com/file/d/1zzY3f8iCthb_s240rV67uiA9VpskZr2s/view?usp=sharing)**
 
 ### MCP ツールの動作
 
@@ -201,7 +201,7 @@ vibehq-spawn --name "Riley" --role "Backend Engineer" \
 
 ## ⚠️ プラットフォームサポート
 
-> **VibHQ は現在 Windows で開発・テストされています。**
+> **VibeHQ は現在 Windows で開発・テストされています。**
 > Mac と Linux のサポートはアーキテクチャ的にサポートされていますが、完全なテストはまだ行われていません。
 
 | 機能 | Windows | Mac | Linux |
@@ -228,7 +228,7 @@ vibehq-spawn --name "Riley" --role "Backend Engineer" \
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                      VibHQ Hub                           │
+│                      VibeHQ Hub                           │
 │                （WebSocket サーバー）                      │
 │                                                          │
 │  ┌─────────┐  ┌──────────┐  ┌───────────┐  ┌─────────┐ │
