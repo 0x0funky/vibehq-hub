@@ -244,7 +244,7 @@ export class AgentSpawner {
         }
         // Add --dangerously-skip-permissions for Claude if enabled
         if (this.options.dangerouslySkipPermissions && (cmd === 'claude' || cmd.includes('claude'))) {
-            spawnArgs.push('-y', '--dangerously-skip-permissions');
+            spawnArgs.push('--dangerously-skip-permissions');
         }
         // Add --add-dir flags for Claude
         if (this.options.additionalDirs?.length && (cmd === 'claude' || cmd.includes('claude'))) {
