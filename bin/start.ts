@@ -13,6 +13,7 @@ import { welcomeScreen } from '../src/tui/screens/welcome.js';
 import { createTeamScreen } from '../src/tui/screens/create-team.js';
 import { DashboardScreen } from '../src/tui/screens/dashboard.js';
 import { settingsScreen } from '../src/tui/screens/settings.js';
+import { getPresetByRole } from '../src/tui/role-presets.js';
 import { selectMenu } from '../src/tui/menu.js';
 import { prompt } from '../src/tui/input.js';
 
@@ -179,11 +180,12 @@ function detectLinuxTerminal(): string | null {
 
 // --- Spawn one agent in a new terminal window ---
 function spawnOneAgent(agent: AgentConfig, team: TeamConfig, hubUrl: string): void {
-    // Write system prompt to temp file if present (avoids shell escaping issues)
+    // Resolve system prompt: explicit > role preset > none
+    const effectivePrompt = agent.systemPrompt || getPresetByRole(agent.role)?.defaultSystemPrompt || '';
     let sysPromptArg = '';
-    if (agent.systemPrompt) {
+    if (effectivePrompt) {
         const tmpFile = `${tmpdir()}/vibehq-prompt-${agent.name.replace(/\s/g, '_')}-${Date.now()}.md`;
-        writeFileSync(tmpFile, agent.systemPrompt);
+        writeFileSync(tmpFile, effectivePrompt);
         sysPromptArg = ` --system-prompt-file "${tmpFile}"`;
     }
     const skipPermsArg = agent.dangerouslySkipPermissions ? ' --skip-permissions' : '';
