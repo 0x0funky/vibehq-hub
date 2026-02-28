@@ -13,6 +13,7 @@ import { welcomeScreen } from '../src/tui/screens/welcome.js';
 import { createTeamScreen } from '../src/tui/screens/create-team.js';
 import { DashboardScreen } from '../src/tui/screens/dashboard.js';
 import { settingsScreen } from '../src/tui/screens/settings.js';
+import { getPresetByRole } from '../src/tui/role-presets.js';
 import { selectMenu } from '../src/tui/menu.js';
 import { prompt } from '../src/tui/input.js';
 
@@ -50,6 +51,8 @@ interface AgentConfig {
     cli: string;
     cwd: string;
     systemPrompt?: string;
+    dangerouslySkipPermissions?: boolean;
+    additionalDirs?: string[];
 }
 
 interface TeamConfig {
@@ -178,14 +181,17 @@ function detectLinuxTerminal(): string | null {
 
 // --- Spawn one agent in a new terminal window ---
 function spawnOneAgent(agent: AgentConfig, team: TeamConfig, hubUrl: string): void {
-    // Write system prompt to temp file if present (avoids shell escaping issues)
+    // Resolve system prompt: explicit > role preset > none
+    const effectivePrompt = agent.systemPrompt || getPresetByRole(agent.role)?.defaultSystemPrompt || '';
     let sysPromptArg = '';
-    if (agent.systemPrompt) {
+    if (effectivePrompt) {
         const tmpFile = `${tmpdir()}/vibehq-prompt-${agent.name.replace(/\s/g, '_')}-${Date.now()}.md`;
-        writeFileSync(tmpFile, agent.systemPrompt);
+        writeFileSync(tmpFile, effectivePrompt);
         sysPromptArg = ` --system-prompt-file "${tmpFile}"`;
     }
-    const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}"${sysPromptArg} -- ${agent.cli}`;
+    const skipPermsArg = agent.dangerouslySkipPermissions ? ' --skip-permissions' : '';
+    const addDirsArg = agent.additionalDirs?.map(d => ` --add-dir "${d}"`).join('') || '';
+    const spawnCmd = `vibehq-spawn --name "${agent.name}" --role "${agent.role}" --team "${team.name}" --hub "${hubUrl}"${sysPromptArg}${skipPermsArg}${addDirsArg} -- ${agent.cli}`;
     const safeCmd = spawnCmd.replace(/'/g, "'\\''");
 
     if (process.platform === 'win32') {
@@ -303,7 +309,7 @@ async function startTeam(configPath: string): Promise<void> {
 
     // Start Hub on the found port
     console.log(`  ${c.green}✓${c.reset} Hub started on port ${c.bold}${actualPort}${c.reset}`);
-    const wss = startHub({ port: actualPort, verbose: false });
+    const wss = startHub({ port: actualPort, verbose: false, team: team.name });
     runningHub = { wss, port: actualPort };
 
     // Spawn agents (pass actual hub port they should connect to)

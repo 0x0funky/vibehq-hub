@@ -37,6 +37,8 @@ function parseArgs(): { name: string; role: string; hub: string; team: string; t
     let team = 'default';
     let timeout = 120000;
     let systemPrompt = '';
+    let skipPermissions = false;
+    let additionalDirs: string[] = [];
     let command = '';
     let commandArgs: string[] = [];
 
@@ -86,6 +88,12 @@ function parseArgs(): { name: string; role: string; hub: string; team: string; t
                 }
                 break;
             }
+            case '--skip-permissions':
+                skipPermissions = true;
+                break;
+            case '--add-dir':
+                additionalDirs.push(ourArgs[++i]);
+                break;
             case '-h':
             case '--help':
                 printHelp();
@@ -106,10 +114,10 @@ function parseArgs(): { name: string; role: string; hub: string; team: string; t
         process.exit(1);
     }
 
-    return { name, role, hub, team, timeout, systemPrompt, command, commandArgs };
+    return { name, role, hub, team, timeout, systemPrompt, skipPermissions, additionalDirs, command, commandArgs };
 }
 
-const { name, role, hub, team, timeout, systemPrompt, command, commandArgs } = parseArgs();
+const { name, role, hub, team, timeout, systemPrompt, skipPermissions, additionalDirs, command, commandArgs } = parseArgs();
 
 const spawner = new AgentSpawner({
     name,
@@ -119,6 +127,8 @@ const spawner = new AgentSpawner({
     command,
     args: commandArgs,
     systemPrompt,
+    dangerouslySkipPermissions: skipPermissions,
+    additionalDirs,
 });
 
 spawner.start().catch(() => {

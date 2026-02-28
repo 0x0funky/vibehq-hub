@@ -133,6 +133,22 @@ export class AgentRegistry {
     }
 
     /**
+     * Get spawner info (name + team) by WS connection.
+     */
+    getSpawnerInfo(ws: WebSocket): { name: string; team: string } | undefined {
+        return this.spawners.get(ws);
+    }
+
+    private statusCallbacks: ((agentId: string, status: AgentStatus) => void)[] = [];
+
+    /**
+     * Register a callback for agent status changes.
+     */
+    onStatusChange(cb: (agentId: string, status: AgentStatus) => void): void {
+        this.statusCallbacks.push(cb);
+    }
+
+    /**
      * Update an agent's status.
      */
     updateStatus(ws: WebSocket, status: AgentStatus): void {
@@ -148,8 +164,24 @@ export class AgentRegistry {
             status: agent.status,
         } satisfies AgentStatusBroadcastMessage, ws);
 
+        // Fire status change callbacks (for idle-aware queue flush)
+        for (const cb of this.statusCallbacks) {
+            cb(agent.id, status);
+        }
+
         this.log(`Status update: ${agent.name} → ${status}`);
     }
+
+    /**
+     * Get agent by ID.
+     */
+    getAgentById(agentId: string): ConnectedAgent | undefined {
+        for (const agent of this.agents.values()) {
+            if (agent.id === agentId) return agent;
+        }
+        return undefined;
+    }
+
 
     /**
      * Get agent by name (case-insensitive), optionally filtered by team.

@@ -33,31 +33,77 @@
             ]
         },
         {
-            "name": "yoyoyo",
+            "name": "medvault",
             "hub": {
-                "port": 4019
+                "port": 3002
             },
             "agents": [
                 {
                     "name": "Alex",
                     "role": "Project Manager",
                     "cli": "codex",
-                    "cwd": "D:\\TCGNexus",
-                    "systemPrompt": "You are a Project Manager in a multi-agent AI team.\n\n## Your Workflow (follow this order every time):\n1. **Kickoff**: Read all shared files and messages to understand current state\n2. **Create Brief**: If starting fresh, write a project brief to `shared/brief.md` with:\n   - Project goal and scope\n   - API contracts / interfaces between teammates (if applicable)\n   - Task assignments for each team member with clear acceptance criteria\n3. **Notify Team**: Use post_update() to announce the brief is ready\n4. **Monitor**: Check in regularly. If anyone posts a blocker, help unblock them\n5. **Integrate**: When development is done, coordinate integration and testing\n6. **Report**: Keep `shared/status.md` updated with current progress\n\n## Communication Style:\n- Be specific with task assignments — vague instructions cause misalignment\n- Define interfaces BEFORE letting parallel work start\n- Ask engineers to confirm they understood their task before they start\n\n## VibHQ Tools You Have Access To:\n- **post_update(message)** → Broadcast a status update to the entire team\n- **send_message(agentName, message)** → Send a direct message to a specific teammate\n- **read_messages()** → Read messages sent to you\n- **share_file(path, content)** → Save a file to the shared team folder\n- **read_shared_file(filename)** → Read a file from the shared folder\n- **list_shared_files()** → List all shared files\n\n## Golden Rules:\n1. Your FIRST action every session: read messages and check shared files for context\n2. Post a status update when you start, when you hit a blocker, and when you finish a task\n3. If you need something from a teammate, send them a direct message AND post an update\n4. Save important outputs (specs, docs, decisions) to shared files — not just in chat\n"
+                    "cwd": "D:\\medvault"
+                },
+                {
+                    "name": "Sam",
+                    "role": "Product Designer",
+                    "cli": "claude",
+                    "cwd": "D:\\medvault\\design",
+                    "dangerouslySkipPermissions": true
                 },
                 {
                     "name": "Jordan",
                     "role": "Frontend Engineer",
                     "cli": "claude",
-                    "cwd": "D:\\TCGNexus\\frontend",
-                    "systemPrompt": "You are a Frontend Engineer in a multi-agent AI team.\n\n## Your Workflow:\n1. **Orientation**: Read `shared/brief.md` and `shared/api-contract.md` if they exist\n2. **If no spec exists**: Message the PM — don't start coding yet. Ask for the API contract.\n3. **Acknowledge**: Reply to PM confirming you understand your task\n4. **Develop**:\n   - Use mock data if the API isn't ready yet — don't block on backend\n   - Save your component structure plan to `shared/frontend-plan.md` early\n   - Update status when you complete major sections\n5. **Integration**: When backend is ready, replace mocks with real API calls\n6. **Done**: Post an update when feature is complete and tested\n\n## Key Principle:\nNever make assumptions about API shape — always check `shared/api-contract.md` or ask the backend engineer directly.\n\n## VibHQ Tools You Have Access To:\n- **post_update(message)** → Broadcast a status update to the entire team\n- **send_message(agentName, message)** → Send a direct message to a specific teammate\n- **read_messages()** → Read messages sent to you\n- **share_file(path, content)** → Save a file to the shared team folder\n- **read_shared_file(filename)** → Read a file from the shared folder\n- **list_shared_files()** → List all shared files\n\n## Golden Rules:\n1. Your FIRST action every session: read messages and check shared files for context\n2. Post a status update when you start, when you hit a blocker, and when you finish a task\n3. If you need something from a teammate, send them a direct message AND post an update\n4. Save important outputs (specs, docs, decisions) to shared files — not just in chat\n"
+                    "cwd": "D:\\medvault\\frontend",
+                    "dangerouslySkipPermissions": true,
+                    "additionalDirs": [
+                        "D:\\medvault\\mock-data"
+                    ]
+                },
+                {
+                    "name": "Taylor",
+                    "role": "Frontend Engineer",
+                    "cli": "claude",
+                    "cwd": "D:\\medvault\\imaging",
+                    "dangerouslySkipPermissions": true,
+                    "additionalDirs": [
+                        "D:\\medvault\\mock-data"
+                    ]
                 },
                 {
                     "name": "Riley",
                     "role": "Backend Engineer",
                     "cli": "claude",
-                    "cwd": "D:\\TCGNexus\\backend",
-                    "systemPrompt": "You are a Backend Engineer in a multi-agent AI team.\n\n## Your Workflow:\n1. **Orientation**: Read `shared/brief.md` if it exists\n2. **API Contract First**: Before writing any code, define your API in `shared/api-contract.md`:\n   - List all endpoints with path, method, request body, response schema\n   - This is YOUR responsibility — frontend is waiting for this\n3. **Post Update**: Announce the contract is ready so frontend can start\n4. **Develop**: Build the API following the documented contract\n5. **Status Updates**: Post progress updates especially when endpoints are ready to test\n6. **Done**: Post when API is fully functional and tested\n\n## Key Principle:\nWriting the API contract is the FIRST coding task, not the last. Frontend can mock-develop against your contract immediately.\n\n## VibHQ Tools You Have Access To:\n- **post_update(message)** → Broadcast a status update to the entire team\n- **send_message(agentName, message)** → Send a direct message to a specific teammate\n- **read_messages()** → Read messages sent to you\n- **share_file(path, content)** → Save a file to the shared team folder\n- **read_shared_file(filename)** → Read a file from the shared folder\n- **list_shared_files()** → List all shared files\n\n## Golden Rules:\n1. Your FIRST action every session: read messages and check shared files for context\n2. Post a status update when you start, when you hit a blocker, and when you finish a task\n3. If you need something from a teammate, send them a direct message AND post an update\n4. Save important outputs (specs, docs, decisions) to shared files — not just in chat\n"
+                    "cwd": "D:\\medvault\\backend",
+                    "dangerouslySkipPermissions": true,
+                    "additionalDirs": [
+                        "D:\\medvault\\mock-data"
+                    ]
+                },
+                {
+                    "name": "Morgan",
+                    "role": "AI Engineer",
+                    "cli": "claude",
+                    "cwd": "D:\\medvault\\ai",
+                    "dangerouslySkipPermissions": true,
+                    "additionalDirs": [
+                        "D:\\medvault\\mock-data"
+                    ]
+                },
+                {
+                    "name": "Casey",
+                    "role": "QA Engineer",
+                    "cli": "claude",
+                    "cwd": "D:\\medvault\\qa",
+                    "dangerouslySkipPermissions": true,
+                    "additionalDirs": [
+                        "D:\\medvault\\frontend",
+                        "D:\\medvault\\backend",
+                        "D:\\medvault\\imaging",
+                        "D:\\medvault\\ai",
+                        "D:\\medvault\\mock-data"
+                    ]
                 }
             ]
         }

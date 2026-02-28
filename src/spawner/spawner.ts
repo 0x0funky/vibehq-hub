@@ -1,6 +1,7 @@
 import * as pty from 'node-pty';
 import { execSync } from 'child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, watch, statSync } from 'fs';
+import { open } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import WebSocket from 'ws';
@@ -36,6 +37,8 @@ export interface SpawnerOptions {
     command: string;
     args: string[];
     systemPrompt?: string;
+    dangerouslySkipPermissions?: boolean;
+    additionalDirs?: string[];
 }
 
 export class AgentSpawner {
@@ -44,6 +47,9 @@ export class AgentSpawner {
     private options: SpawnerOptions;
     private agentId: string | null = null;
     private teammates: Map<string, Agent> = new Map();
+    private currentStatus: 'idle' | 'working' = 'idle';
+    private ptyIdleTimer: ReturnType<typeof setTimeout> | null = null;
+    private readonly PTY_IDLE_TIMEOUT = 10000; // 10s of PTY silence = idle
 
     constructor(options: SpawnerOptions) {
         this.options = options;
@@ -57,6 +63,15 @@ export class AgentSpawner {
         // Inject system prompt using CLI-native mechanisms
         if (this.options.systemPrompt) {
             this.injectSystemPrompt();
+        }
+
+        // Start idle detection based on CLI type
+        const cmd = this.options.command.toLowerCase();
+        if (cmd === 'claude' || cmd.includes('claude')) {
+            this.watchClaudeTranscript();
+        } else {
+            // Codex / Gemini: use PTY output timeout
+            this.startPtyIdleTimer();
         }
     }
 
@@ -227,6 +242,16 @@ export class AgentSpawner {
         if (systemPrompt && (cmd === 'claude' || cmd.includes('claude'))) {
             spawnArgs.push('--append-system-prompt', systemPrompt);
         }
+        // Add --dangerously-skip-permissions for Claude if enabled
+        if (this.options.dangerouslySkipPermissions && (cmd === 'claude' || cmd.includes('claude'))) {
+            spawnArgs.push('--dangerously-skip-permissions');
+        }
+        // Add --add-dir flags for Claude
+        if (this.options.additionalDirs?.length && (cmd === 'claude' || cmd.includes('claude'))) {
+            for (const dir of this.options.additionalDirs) {
+                spawnArgs.push('--add-dir', dir);
+            }
+        }
 
         this.ptyProcess = pty.spawn(resolvedCommand, spawnArgs, {
             name: 'xterm-color',
@@ -256,6 +281,8 @@ export class AgentSpawner {
         // PTY output → user stdout (direct passthrough, no parsing)
         this.ptyProcess.onData((data: string) => {
             process.stdout.write(data);
+            // Reset PTY idle timer on any output (for Codex/Gemini)
+            this.resetPtyIdleTimer();
         });
 
         this.ptyProcess.onExit(({ exitCode }) => {
@@ -400,7 +427,147 @@ export class AgentSpawner {
         }
     }
 
+    // =========================================================
+    // Idle Detection
+    // =========================================================
+
+    /**
+     * Send agent status to Hub.
+     */
+    private sendStatus(status: 'idle' | 'working'): void {
+        if (status === this.currentStatus) return;
+        this.currentStatus = status;
+        this.sendToHub({ type: 'agent:status', status });
+    }
+
+    /**
+     * Claude Code JSONL transcript watcher.
+     * Watches ~/.claude/projects/<encoded-path>/sessions/ for JSONL files.
+     * Detects: turn_duration → idle, assistant message → working.
+     */
+    private watchClaudeTranscript(): void {
+        const cwd = this.options.args.find((_, i, arr) => i > 0 && arr[i - 1] === '--cwd') || process.cwd();
+        // Claude encodes the path: / → %2F on unix, \ → %5C on windows
+        const encodedPath = cwd.replace(/[\\/:]/g, (c) => encodeURIComponent(c));
+        const sessionsDir = join(homedir(), '.claude', 'projects', encodedPath, 'sessions');
+
+        let watching = false;
+        let currentFile = '';
+        let fileOffset = 0;
+
+        const findLatestJsonl = (): string | null => {
+            if (!existsSync(sessionsDir)) return null;
+            const files = readdirSync(sessionsDir)
+                .filter(f => f.endsWith('.jsonl'))
+                .map(f => ({ name: f, mtime: statSync(join(sessionsDir, f)).mtimeMs }))
+                .sort((a, b) => b.mtime - a.mtime);
+            return files.length > 0 ? join(sessionsDir, files[0].name) : null;
+        };
+
+        const tailFile = async (filepath: string) => {
+            try {
+                const stat = statSync(filepath);
+                if (stat.size <= fileOffset) return;
+
+                const fh = await open(filepath, 'r');
+                const buf = Buffer.alloc(stat.size - fileOffset);
+                await fh.read(buf, 0, buf.length, fileOffset);
+                await fh.close();
+                fileOffset = stat.size;
+
+                const lines = buf.toString('utf-8').split('\n').filter(l => l.trim());
+                for (const line of lines) {
+                    try {
+                        const msg = JSON.parse(line);
+                        if (msg.type === 'system' && msg.subtype === 'turn_duration') {
+                            this.sendStatus('idle');
+                        } else if (msg.type === 'assistant') {
+                            this.sendStatus('working');
+                        }
+                    } catch {
+                        // skip malformed lines
+                    }
+                }
+            } catch {
+                // file might be temporarily locked
+            }
+        };
+
+        const startWatch = () => {
+            if (watching) return;
+
+            const latest = findLatestJsonl();
+            if (latest) {
+                currentFile = latest;
+                fileOffset = statSync(latest).size; // start from end
+                watching = true;
+            }
+
+            // Watch the sessions directory for new/modified files
+            try {
+                const dirToWatch = existsSync(sessionsDir) ? sessionsDir : join(homedir(), '.claude', 'projects', encodedPath);
+                if (!existsSync(dirToWatch)) {
+                    // Claude hasn't created dirs yet — retry later
+                    setTimeout(startWatch, 5000);
+                    return;
+                }
+
+                watch(dirToWatch, { recursive: true }, (_event, filename) => {
+                    if (!filename || !filename.endsWith('.jsonl')) return;
+
+                    const fullPath = join(sessionsDir, typeof filename === 'string' ? filename.replace(/^sessions[\\/]/, '') : '');
+                    if (existsSync(fullPath)) {
+                        if (fullPath !== currentFile) {
+                            currentFile = fullPath;
+                            fileOffset = 0;
+                        }
+                        tailFile(fullPath);
+                    }
+                });
+
+                watching = true;
+            } catch {
+                // fs.watch might fail on some systems — fall back to polling
+                setInterval(() => {
+                    const latest = findLatestJsonl();
+                    if (latest) {
+                        if (latest !== currentFile) {
+                            currentFile = latest;
+                            fileOffset = 0;
+                        }
+                        tailFile(latest);
+                    }
+                }, 3000);
+            }
+        };
+
+        // Delay to let Claude Code create session files
+        setTimeout(startWatch, 3000);
+    }
+
+    /**
+     * PTY-based idle detection for Codex/Gemini.
+     * If PTY output stops for N seconds, mark as idle.
+     */
+    private startPtyIdleTimer(): void {
+        // Start the first idle timer immediately
+        this.resetPtyIdleTimer();
+    }
+
+    private resetPtyIdleTimer(): void {
+        if (this.ptyIdleTimer) clearTimeout(this.ptyIdleTimer);
+        // Any PTY output means the CLI is working
+        if (this.currentStatus === 'idle') {
+            this.sendStatus('working');
+        }
+        // Start countdown to idle
+        this.ptyIdleTimer = setTimeout(() => {
+            this.sendStatus('idle');
+        }, this.PTY_IDLE_TIMEOUT);
+    }
+
     private cleanup(): void {
+        if (this.ptyIdleTimer) clearTimeout(this.ptyIdleTimer);
         this.ws?.close();
         if (process.stdin.isTTY) {
             process.stdin.setRawMode(false);

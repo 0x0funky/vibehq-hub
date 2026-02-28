@@ -12,6 +12,9 @@ import { registerCheckStatus } from './tools/check-status.js';
 import { registerReplyToTeam } from './tools/reply-to-team.js';
 import { registerShareFile, registerReadSharedFile, registerListSharedFiles } from './tools/share-file.js';
 import { registerPostUpdate, registerGetTeamUpdates } from './tools/team-updates.js';
+import { registerCreateTask, registerAcceptTask, registerUpdateTask, registerCompleteTask, registerListTasks } from './tools/task-lifecycle.js';
+import { registerPublishArtifact, registerListArtifacts } from './tools/artifact.js';
+import { registerPublishContract, registerSignContract, registerCheckContract } from './tools/contract.js';
 
 export interface AgentOptions {
     name: string;
@@ -44,6 +47,23 @@ export async function startAgent(options: AgentOptions): Promise<void> {
     registerListSharedFiles(server, team);
     registerPostUpdate(server, hub);
     registerGetTeamUpdates(server, hub);
+
+    // V2: Task lifecycle
+    registerCreateTask(server, hub);
+    registerAcceptTask(server, hub);
+    registerUpdateTask(server, hub);
+    registerCompleteTask(server, hub);
+    registerListTasks(server, hub);
+
+    // V2: Artifact system
+    registerPublishArtifact(server, hub, team);
+    registerListArtifacts(server, hub);
+
+    // V2: Contract sign-off
+    registerPublishContract(server, hub);
+    registerSignContract(server, hub);
+    registerCheckContract(server, hub);
+
 
     // Connect to Hub
     try {
