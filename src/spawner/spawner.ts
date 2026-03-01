@@ -36,6 +36,7 @@ export interface SpawnerOptions {
     team: string;
     command: string;
     args: string[];
+    cwd?: string;
     systemPrompt?: string;
     dangerouslySkipPermissions?: boolean;
     additionalDirs?: string[];
@@ -53,6 +54,11 @@ export class AgentSpawner {
 
     constructor(options: SpawnerOptions) {
         this.options = options;
+    }
+
+    /** Resolve working directory: explicit cwd option > process.cwd() */
+    private get projectCwd(): string {
+        return this.options.cwd || process.cwd();
     }
 
     async start(): Promise<void> {
@@ -91,7 +97,7 @@ export class AgentSpawner {
             // Nothing to do here — args already added
         } else if (cmd === 'codex' || cmd.includes('codex')) {
             // Codex: write codex.md in project root (cwd)
-            const codexMdPath = join(process.cwd(), 'codex.md');
+            const codexMdPath = join(this.projectCwd, 'codex.md');
             const marker = '<!-- vibehq-system-prompt -->';
             let existing = '';
             if (existsSync(codexMdPath)) {
@@ -107,7 +113,7 @@ export class AgentSpawner {
             console.error(`[Spawner] System prompt written to ${codexMdPath}`);
         } else if (cmd === 'gemini' || cmd.includes('gemini')) {
             // Gemini: write .gemini/GEMINI.md in project root (cwd)
-            const geminiDir = join(process.cwd(), '.gemini');
+            const geminiDir = join(this.projectCwd, '.gemini');
             if (!existsSync(geminiDir)) {
                 mkdirSync(geminiDir, { recursive: true });
             }
@@ -157,7 +163,7 @@ export class AgentSpawner {
         if (!config.projects) config.projects = {};
 
         // Claude Code uses forward-slash path keys on Windows
-        const cwd = process.cwd();
+        const cwd = this.projectCwd;
         const cwdForward = cwd.replace(/\\/g, '/');
 
         const teamServer = {
@@ -257,7 +263,7 @@ export class AgentSpawner {
             name: 'xterm-color',
             cols,
             rows,
-            cwd: process.cwd(),
+            cwd: this.projectCwd,
             env: process.env as { [key: string]: string },
         });
 
@@ -446,7 +452,7 @@ export class AgentSpawner {
      * Detects: turn_duration → idle, assistant message → working.
      */
     private watchClaudeTranscript(): void {
-        const cwd = this.options.args.find((_, i, arr) => i > 0 && arr[i - 1] === '--cwd') || process.cwd();
+        const cwd = this.options.cwd || this.options.args.find((_, i, arr) => i > 0 && arr[i - 1] === '--cwd') || process.cwd();
         // Claude encodes the path: / → %2F on unix, \ → %5C on windows
         const encodedPath = cwd.replace(/[\\/:]/g, (c) => encodeURIComponent(c));
         const sessionsDir = join(homedir(), '.claude', 'projects', encodedPath, 'sessions');

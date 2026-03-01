@@ -17,6 +17,7 @@ Options:
   -r, --role <string>          Agent role (default: "Engineer")
   -u, --hub <url>              Hub WebSocket URL (default: ws://localhost:3001)
       --team <string>          Team name (default: "default")
+  -d, --dir <path>             Project working directory (default: cwd)
   -t, --timeout <ms>           Response timeout in ms (default: 120000)
       --system-prompt <text>   System prompt text
       --system-prompt-file <f> Read system prompt from a file
@@ -29,12 +30,13 @@ Examples:
 `);
 }
 
-function parseArgs(): { name: string; role: string; hub: string; team: string; timeout: number; systemPrompt: string; command: string; commandArgs: string[] } {
+function parseArgs(): { name: string; role: string; hub: string; team: string; dir: string; timeout: number; systemPrompt: string; command: string; commandArgs: string[] } {
     const args = process.argv.slice(2);
     let name = '';
     let role = 'Engineer';
     let hub = 'ws://localhost:3001';
     let team = 'default';
+    let dir = '';
     let timeout = 120000;
     let systemPrompt = '';
     let skipPermissions = false;
@@ -68,6 +70,10 @@ function parseArgs(): { name: string; role: string; hub: string; team: string; t
                 break;
             case '--team':
                 team = ourArgs[++i];
+                break;
+            case '-d':
+            case '--dir':
+                dir = ourArgs[++i];
                 break;
             case '-t':
             case '--timeout':
@@ -114,10 +120,10 @@ function parseArgs(): { name: string; role: string; hub: string; team: string; t
         process.exit(1);
     }
 
-    return { name, role, hub, team, timeout, systemPrompt, skipPermissions, additionalDirs, command, commandArgs };
+    return { name, role, hub, team, dir, timeout, systemPrompt, skipPermissions, additionalDirs, command, commandArgs };
 }
 
-const { name, role, hub, team, timeout, systemPrompt, skipPermissions, additionalDirs, command, commandArgs } = parseArgs();
+const { name, role, hub, team, dir, timeout, systemPrompt, skipPermissions, additionalDirs, command, commandArgs } = parseArgs();
 
 const spawner = new AgentSpawner({
     name,
@@ -126,6 +132,7 @@ const spawner = new AgentSpawner({
     team,
     command,
     args: commandArgs,
+    cwd: dir || undefined,
     systemPrompt,
     dangerouslySkipPermissions: skipPermissions,
     additionalDirs,
