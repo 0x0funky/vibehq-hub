@@ -557,10 +557,12 @@ export class AgentSpawner {
                         const msg = JSON.parse(line);
                         // Claude v2.1+ JSONL format:
                         // type:'user' with userType:'external' = new user input -> working
-                        // type:'assistant' with stop_reason:'end_turn' = turn complete -> idle
+                        // type:'system' with subtype:'turn_duration' = entire turn complete -> idle
+                        //   (fires ONCE after all tool calls are done, unlike stop_reason:'end_turn'
+                        //    which can fire multiple times during a single turn with tool use)
                         if (msg.type === 'user' && msg.userType === 'external') {
                             this.sendStatus('working');
-                        } else if (msg.type === 'assistant' && msg.message?.stop_reason === 'end_turn') {
+                        } else if (msg.type === 'system' && msg.subtype === 'turn_duration') {
                             this.sendStatus('idle');
                         }
                     } catch {

@@ -20,7 +20,11 @@ const SHARED_CONTEXT = `
 - **check_status(name?)** — Check if a teammate is idle/working/busy
 
 ### Task Management
-- **create_task(title, description, assignee, priority)** — Create a tracked task for a teammate (returns taskId)
+- **create_task(title, description, assignee, priority, output_target?, consumes?, produces?, depends_on?)** — Create a tracked task. Optional structured fields:
+  - "output_target": {directory, filenames, integrates_into} — where to place output
+  - "consumes": [{artifact, owner}] — artifacts the assignee should read, not recreate
+  - "produces": {artifact, shared_files} — expected deliverables
+  - "depends_on": [{task_id?, artifact?}] — tasks/artifacts to wait for (task auto-queues until ready)
 - **accept_task(task_id, accepted, note?)** — Accept or reject a task assigned to you
 - **update_task(task_id, status, note?)** — Update task status to "in_progress" or "blocked"
 - **complete_task(task_id, artifact, note?)** — Mark task as done (MUST include artifact/deliverable)
@@ -34,7 +38,7 @@ const SHARED_CONTEXT = `
 - **list_shared_files()** — List all shared files
 
 ### Contract Sign-Off
-- **publish_contract(spec_path, required_signers[])** — Publish a spec requiring sign-off before coding starts
+- **publish_contract(spec_path, required_signers[], contract_type?, schema_validation?)** — Publish a spec requiring sign-off. Optional: contract_type ("api"/"interface"/"schema"), schema_validation ({format, required_keys})
 - **sign_contract(spec_path, comment?)** — Sign/approve a published contract
 - **check_contract(spec_path?)** — Check sign-off status (who signed, who's pending)
 
@@ -69,6 +73,13 @@ export const ROLE_PRESETS: RolePreset[] = [
 - Use create_task with clear acceptance criteria — vague instructions cause misalignment
 - If someone is "blocked", help unblock them immediately
 - Use check_status() before creating new tasks — don't overload busy agents
+
+## Critical: You Are NOT a Developer
+- ❌ NEVER write code yourself — you are a coordinator, not a developer
+- ❌ NEVER fix bugs, write adapters, or modify files directly
+- ✅ When you discover an issue (e.g. schema mismatch, integration bug), create_task for the most appropriate engineer
+- ✅ Include all context in the task description: what's broken, which files/artifacts are involved, and what the fix should look like
+- Your context window is too valuable for coordination to waste on writing code
 ${SHARED_CONTEXT}`,
     },
     {

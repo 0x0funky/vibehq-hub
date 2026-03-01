@@ -15,10 +15,32 @@ export function registerCreateTask(server: McpServer, hub: HubClient): void {
             description: z.string().describe('Detailed task description with acceptance criteria'),
             assignee: z.string().describe('Name of the teammate to assign this task to'),
             priority: z.enum(['low', 'medium', 'high']).default('medium').describe('Task priority'),
+            output_target: z.object({
+                directory: z.string().optional().describe('Target directory for output files'),
+                filenames: z.array(z.string()).optional().describe('Expected output filenames'),
+                integrates_into: z.string().optional().describe('File this work must integrate into'),
+            }).optional().describe('Where the assignee should place their output'),
+            consumes: z.array(z.object({
+                artifact: z.string().describe('Artifact filename to consume'),
+                owner: z.string().describe('Who owns this artifact'),
+            })).optional().describe('Artifacts this task depends on — assignee should read, not recreate'),
+            produces: z.object({
+                artifact: z.string().optional().describe('Expected artifact filename to publish'),
+                shared_files: z.array(z.string()).optional().describe('Expected shared files to create'),
+            }).optional().describe('What this task should produce'),
+            depends_on: z.array(z.object({
+                task_id: z.string().optional().describe('Task ID to wait for'),
+                artifact: z.string().optional().describe('Artifact name to wait for'),
+            })).optional().describe('Tasks/artifacts that must be completed before this task starts'),
         },
         async (args) => {
             try {
-                hub.createTask(args.title, args.description, args.assignee, args.priority);
+                hub.createTask(args.title, args.description, args.assignee, args.priority, {
+                    outputTarget: args.output_target,
+                    consumes: args.consumes,
+                    produces: args.produces,
+                    dependsOn: args.depends_on,
+                });
                 return {
                     content: [{
                         type: 'text' as const,

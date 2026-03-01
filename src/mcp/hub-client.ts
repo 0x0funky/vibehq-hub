@@ -381,8 +381,19 @@ export class HubClient extends EventEmitter {
 
     // --- V2: Task Lifecycle ---
 
-    createTask(title: string, description: string, assignee: string, priority: TaskPriority = 'medium'): void {
-        this.send({ type: 'task:create', title, description, assignee, priority } satisfies TaskCreateMessage);
+    createTask(title: string, description: string, assignee: string, priority: TaskPriority = 'medium', extra?: {
+        outputTarget?: { directory?: string; filenames?: string[]; integrates_into?: string };
+        consumes?: { artifact: string; owner: string }[];
+        produces?: { artifact?: string; shared_files?: string[] };
+        dependsOn?: { task_id?: string; artifact?: string }[];
+    }): void {
+        this.send({
+            type: 'task:create', title, description, assignee, priority,
+            ...(extra?.outputTarget && { outputTarget: extra.outputTarget }),
+            ...(extra?.consumes && { consumes: extra.consumes }),
+            ...(extra?.produces && { produces: extra.produces }),
+            ...(extra?.dependsOn && { dependsOn: extra.dependsOn }),
+        } satisfies TaskCreateMessage);
     }
 
     acceptTask(taskId: string, accepted: boolean, note?: string): void {
@@ -433,8 +444,12 @@ export class HubClient extends EventEmitter {
 
     // --- V2: Contract ---
 
-    publishContract(specPath: string, requiredSigners: string[]): void {
-        this.send({ type: 'contract:publish', specPath, requiredSigners } satisfies ContractPublishMessage);
+    publishContract(specPath: string, requiredSigners: string[], contractType?: 'api' | 'interface' | 'schema', schemaValidation?: { format?: string; required_keys?: string[] }): void {
+        this.send({
+            type: 'contract:publish', specPath, requiredSigners,
+            ...(contractType && { contractType }),
+            ...(schemaValidation && { schemaValidation }),
+        } satisfies ContractPublishMessage);
     }
 
     signContract(specPath: string, comment?: string): void {

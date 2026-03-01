@@ -13,10 +13,16 @@ export function registerPublishContract(server: McpServer, hub: HubClient): void
         {
             spec_path: z.string().describe('Path of the shared file to sign off on (e.g. "api-spec.md")'),
             required_signers: z.array(z.string()).describe('List of teammate names who must sign (e.g. ["Jordan", "Riley"])'),
+            contract_type: z.enum(['api', 'interface', 'schema']).optional()
+                .describe('Type of contract: "api" for API spec, "interface" for agent-to-agent data contract, "schema" for data format'),
+            schema_validation: z.object({
+                format: z.string().optional().describe('Expected data format (e.g. "json", "yaml")'),
+                required_keys: z.array(z.string()).optional().describe('Required top-level keys in the data'),
+            }).optional().describe('Optional schema validation rules for artifacts related to this contract'),
         },
         async (args) => {
             try {
-                hub.publishContract(args.spec_path, args.required_signers);
+                hub.publishContract(args.spec_path, args.required_signers, args.contract_type, args.schema_validation);
                 return {
                     content: [{
                         type: 'text' as const,

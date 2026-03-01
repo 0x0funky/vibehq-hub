@@ -188,7 +188,28 @@ export interface TeamUpdateListResponseMessage {
 
 // --- WS Messages: Task Lifecycle ---
 
-export type TaskStatus = 'created' | 'accepted' | 'rejected' | 'in_progress' | 'blocked' | 'done';
+export type TaskStatus = 'created' | 'queued' | 'accepted' | 'rejected' | 'in_progress' | 'blocked' | 'done';
+
+export interface TaskOutputTarget {
+    directory?: string;
+    filenames?: string[];
+    integrates_into?: string;
+}
+
+export interface TaskConsumes {
+    artifact: string;
+    owner: string;
+}
+
+export interface TaskProduces {
+    artifact?: string;
+    shared_files?: string[];
+}
+
+export interface TaskDependency {
+    task_id?: string;    // wait for this task to complete
+    artifact?: string;   // wait for this artifact to be published
+}
 
 export interface TaskState {
     taskId: string;
@@ -200,6 +221,11 @@ export interface TaskState {
     status: TaskStatus;
     artifact?: string;   // shared file path or summary on completion
     statusNote?: string;  // reason for blocked, rejection note, etc.
+    outputTarget?: TaskOutputTarget;
+    consumes?: TaskConsumes[];
+    produces?: TaskProduces;
+    dependsOn?: TaskDependency[];
+    blockedBy?: string[];  // task IDs still pending
     createdAt: string;
     updatedAt: string;
 }
@@ -210,6 +236,10 @@ export interface TaskCreateMessage {
     description: string;
     assignee: string;
     priority?: TaskPriority;
+    outputTarget?: TaskOutputTarget;
+    consumes?: TaskConsumes[];
+    produces?: TaskProduces;
+    dependsOn?: TaskDependency[];
 }
 
 export interface TaskCreatedBroadcast {
@@ -293,6 +323,13 @@ export interface ArtifactListResponseMessage {
 
 // --- WS Messages: Contract ---
 
+export type ContractType = 'api' | 'interface' | 'schema';
+
+export interface SchemaValidation {
+    format?: string;         // e.g. 'json', 'yaml'
+    required_keys?: string[];  // top-level keys the artifact must have
+}
+
 export interface ContractState {
     specPath: string;
     requiredSigners: string[];
@@ -300,12 +337,16 @@ export interface ContractState {
     approved: boolean;
     publishedBy: string;
     publishedAt: string;
+    contractType?: ContractType;
+    schemaValidation?: SchemaValidation;
 }
 
 export interface ContractPublishMessage {
     type: 'contract:publish';
     specPath: string;
     requiredSigners: string[];
+    contractType?: ContractType;
+    schemaValidation?: SchemaValidation;
 }
 
 export interface ContractSignMessage {

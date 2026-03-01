@@ -282,17 +282,97 @@ export function startHub(options: HubOptions): WebSocketServer {
 
                     const taskId = randomUUID().slice(0, 8);
                     const now = new Date().toISOString();
+
+                    // --- Description injection: output_target + consumes ---
+                    let enrichedDescription = msg.description;
+
+                    if (msg.outputTarget) {
+                        const ot = msg.outputTarget;
+                        const parts: string[] = [];
+                        if (ot.directory) parts.push(`Your output must be created in: ${ot.directory}`);
+                        if (ot.filenames?.length) parts.push(`Files to create: ${ot.filenames.join(', ')}`);
+                        if (ot.integrates_into) parts.push(`Must integrate into: ${ot.integrates_into}`);
+                        if (parts.length > 0) {
+                            enrichedDescription = `⚠️ OUTPUT TARGET:\n${parts.join('\n')}\n\n${enrichedDescription}`;
+                        }
+                    }
+
+                    if (msg.consumes?.length) {
+                        const consumeLines = msg.consumes.map((c: any) =>
+                            `- READ and follow: ${c.artifact} (owned by ${c.owner}). Do NOT create your own version.`
+                        ).join('\n');
+                        enrichedDescription += `\n\n📥 REQUIRED INPUTS (do not recreate these):\n${consumeLines}`;
+                    }
+
+                    if (msg.produces) {
+                        const parts: string[] = [];
+                        if (msg.produces.artifact) parts.push(`Publish artifact: ${msg.produces.artifact}`);
+                        if (msg.produces.shared_files?.length) parts.push(`Create shared files: ${msg.produces.shared_files.join(', ')}`);
+                        if (parts.length > 0) {
+                            enrichedDescription += `\n\n📤 EXPECTED OUTPUT:\n${parts.join('\n')}`;
+                        }
+                    }
+
                     const task: TaskState = {
                         taskId,
                         title: msg.title,
-                        description: msg.description,
+                        description: enrichedDescription,
                         assignee: msg.assignee,
                         creator: creator.name,
                         priority: (msg.priority as TaskPriority) || 'medium',
                         status: 'created',
+                        outputTarget: msg.outputTarget,
+                        consumes: msg.consumes,
+                        produces: msg.produces,
+                        dependsOn: msg.dependsOn,
                         createdAt: now,
                         updatedAt: now,
                     };
+
+                    // --- Dependency check ---
+                    if (msg.dependsOn?.length) {
+                        const pendingDeps = msg.dependsOn.filter((dep: any) => {
+                            if (dep.task_id) {
+                                const depTask = taskStore.get(dep.task_id);
+                                return !depTask || depTask.status !== 'done';
+                            }
+                            if (dep.artifact) {
+                                return !artifactStore.has(dep.artifact);
+                            }
+                            return false;
+                        });
+
+                        if (pendingDeps.length > 0) {
+                            task.status = 'queued';
+                            task.blockedBy = pendingDeps
+                                .filter((d: any) => d.task_id)
+                                .map((d: any) => d.task_id);
+                            taskStore.set(taskId, task);
+
+                            // Notify assignee that task is queued
+                            queueOrDeliver(msg.assignee, creator.team, {
+                                type: 'relay:reply:delivered',
+                                fromAgent: creator.name,
+                                message: `[TASK ${taskId}] ${msg.title} — QUEUED\n` +
+                                    `This task is waiting for:\n` +
+                                    pendingDeps.map((d: any) =>
+                                        d.task_id ? `- Task ${d.task_id}` : `- Artifact: ${d.artifact}`
+                                    ).join('\n') +
+                                    `\nYou will be notified when all dependencies are ready.`,
+                            });
+
+                            // Broadcast to team
+                            registry.broadcastToTeam(creator.team, {
+                                type: 'task:created', task,
+                            } satisfies TaskCreatedBroadcast);
+
+                            if (verbose) console.log(`[Hub] Task ${taskId}: ${creator.name} → ${msg.assignee} "${msg.title}" (QUEUED — ${pendingDeps.length} deps)`);
+                            saveState();
+                            break;
+                        }
+                    }
+
+                    // No pending dependencies — dispatch immediately
                     taskStore.set(taskId, task);
 
                     // Broadcast to entire team
@@ -305,7 +385,7 @@ export function startHub(options: HubOptions): WebSocketServer {
                         type: 'relay:task',
                         requestId: taskId,
                         fromAgent: creator.name,
-                        task: `[TASK ${taskId}] ${msg.title}\n\nPriority: ${task.priority}\n\n${msg.description}\n\nPlease call accept_task(task_id="${taskId}", accepted=true) to accept, or reject with a note.`,
+                        task: `[TASK ${taskId}] ${msg.title}\n\nPriority: ${task.priority}\n\n${enrichedDescription}\n\nPlease call accept_task(task_id="${taskId}", accepted=true) to accept, or reject with a note.`,
                         priority: task.priority,
                     });
 
@@ -393,6 +473,54 @@ export function startHub(options: HubOptions): WebSocketServer {
                         message: `[TASK ${task.taskId}] ✅ DONE: "${task.title}"\nArtifact: ${msg.artifact}${msg.note ? `\nNote: ${msg.note}` : ''}`,
                     });
 
+                    // --- Auto-unblock: check queued tasks that depend on this task ---
+                    for (const [, queuedTask] of taskStore) {
+                        if (queuedTask.status !== 'queued' || !queuedTask.blockedBy?.length) continue;
+
+                        // Remove this completed task from blockers
+                        queuedTask.blockedBy = queuedTask.blockedBy.filter(id => id !== task.taskId);
+
+                        // Also check artifact-based dependencies
+                        if (queuedTask.dependsOn?.length) {
+                            const stillPending = queuedTask.dependsOn.some(dep => {
+                                if (dep.task_id) {
+                                    const depTask = taskStore.get(dep.task_id);
+                                    return !depTask || depTask.status !== 'done';
+                                }
+                                if (dep.artifact) {
+                                    return !artifactStore.has(dep.artifact);
+                                }
+                                return false;
+                            });
+                            if (stillPending) continue;
+                        } else if (queuedTask.blockedBy.length > 0) {
+                            continue;
+                        }
+
+                        // All dependencies satisfied — dispatch!
+                        queuedTask.status = 'created';
+                        queuedTask.blockedBy = undefined;
+                        queuedTask.updatedAt = new Date().toISOString();
+
+                        const inputRefs = queuedTask.dependsOn?.map(d =>
+                            d.artifact ? `- ${d.artifact} (use read_shared_file)` : `- Output of task ${d.task_id}`
+                        ).join('\n') || '';
+
+                        queueOrDeliver(queuedTask.assignee, agent.team, {
+                            type: 'relay:task',
+                            requestId: queuedTask.taskId,
+                            fromAgent: queuedTask.creator,
+                            task: `[TASK ${queuedTask.taskId}] ${queuedTask.title} — UNBLOCKED ✅\n` +
+                                `All dependencies are now ready. You may begin.\n\n` +
+                                (inputRefs ? `📥 Available inputs:\n${inputRefs}\n\n` : '') +
+                                `Priority: ${queuedTask.priority}\n\n${queuedTask.description}\n\n` +
+                                `Please call accept_task(task_id="${queuedTask.taskId}", accepted=true) to accept.`,
+                            priority: queuedTask.priority,
+                        });
+
+                        if (verbose) console.log(`[Hub] Task ${queuedTask.taskId}: UNBLOCKED → ${queuedTask.assignee}`);
+                    }
+
                     if (verbose) console.log(`[Hub] Task ${msg.taskId}: completed by ${agent.name}, artifact: ${msg.artifact}`);
                     saveState();
                     break;
@@ -425,6 +553,18 @@ export function startHub(options: HubOptions): WebSocketServer {
 
                     const now = new Date().toISOString();
                     const existing = artifactStore.get(msg.filename);
+
+                    // Ownership lock: only the original owner can update an artifact
+                    if (existing && existing.owner !== agent.name) {
+                        ws.send(JSON.stringify({
+                            type: 'relay:reply:delivered',
+                            fromAgent: 'Hub',
+                            message: `❌ Cannot overwrite "${msg.filename}" — owned by ${existing.owner}. Use read_shared_file("${msg.filename}") to consume it instead.`,
+                        }));
+                        if (verbose) console.log(`[Hub] Artifact ownership conflict: ${agent.name} tried to overwrite "${msg.filename}" owned by ${existing.owner}`);
+                        break;
+                    }
+
                     const action = existing ? 'updated' : 'created';
 
                     const meta: ArtifactMeta = {
@@ -443,6 +583,65 @@ export function startHub(options: HubOptions): WebSocketServer {
                         artifact: meta,
                         action,
                     } satisfies ArtifactChangedBroadcast);
+
+                    // --- Auto-unblock: check queued tasks waiting for this artifact ---
+                    for (const [, queuedTask] of taskStore) {
+                        if (queuedTask.status !== 'queued') continue;
+
+                        const waitingForThis = queuedTask.dependsOn?.some(
+                            dep => dep.artifact === msg.filename
+                        );
+                        if (!waitingForThis) continue;
+
+                        // Re-check all dependencies
+                        const stillPending = queuedTask.dependsOn!.some(dep => {
+                            if (dep.task_id) {
+                                const depTask = taskStore.get(dep.task_id);
+                                return !depTask || depTask.status !== 'done';
+                            }
+                            if (dep.artifact) {
+                                return !artifactStore.has(dep.artifact);
+                            }
+                            return false;
+                        });
+
+                        if (!stillPending) {
+                            queuedTask.status = 'created';
+                            queuedTask.blockedBy = undefined;
+                            queuedTask.updatedAt = new Date().toISOString();
+
+                            const inputRefs = queuedTask.dependsOn?.map(d =>
+                                d.artifact ? `- ${d.artifact} (use read_shared_file)` : `- Output of task ${d.task_id}`
+                            ).join('\n') || '';
+
+                            queueOrDeliver(queuedTask.assignee, agent.team, {
+                                type: 'relay:task',
+                                requestId: queuedTask.taskId,
+                                fromAgent: queuedTask.creator,
+                                task: `[TASK ${queuedTask.taskId}] ${queuedTask.title} — UNBLOCKED ✅\n` +
+                                    `All dependencies are now ready. You may begin.\n\n` +
+                                    (inputRefs ? `📥 Available inputs:\n${inputRefs}\n\n` : '') +
+                                    `Priority: ${queuedTask.priority}\n\n${queuedTask.description}\n\n` +
+                                    `Please call accept_task(task_id="${queuedTask.taskId}", accepted=true) to accept.`,
+                                priority: queuedTask.priority,
+                            });
+
+                            if (verbose) console.log(`[Hub] Task ${queuedTask.taskId}: UNBLOCKED by artifact "${msg.filename}" → ${queuedTask.assignee}`);
+                        }
+                    }
+
+                    // --- Notify active tasks that consume this artifact ---
+                    for (const [, activeTask] of taskStore) {
+                        if (activeTask.status === 'done' || activeTask.status === 'rejected' || activeTask.status === 'queued') continue;
+                        const consumesThis = activeTask.consumes?.some(c => c.artifact === msg.filename);
+                        if (consumesThis) {
+                            queueOrDeliver(activeTask.assignee, agent.team, {
+                                type: 'relay:reply:delivered',
+                                fromAgent: 'Hub',
+                                message: `[ARTIFACT READY] "${msg.filename}" has been ${action} by ${agent.name}. This is a required input for your task ${activeTask.taskId}. Use read_shared_file("${msg.filename}") to access it.`,
+                            });
+                        }
+                    }
 
                     if (verbose) console.log(`[Hub] Artifact ${action}: ${msg.filename} by ${agent.name}`);
                     saveState();
@@ -477,6 +676,8 @@ export function startHub(options: HubOptions): WebSocketServer {
                         approved: false,
                         publishedBy: agent.name,
                         publishedAt: now,
+                        contractType: msg.contractType,
+                        schemaValidation: msg.schemaValidation,
                     };
                     contractStore.set(msg.specPath, contract);
 
@@ -485,11 +686,12 @@ export function startHub(options: HubOptions): WebSocketServer {
                     } satisfies ContractStatusBroadcast);
 
                     // Notify each required signer
+                    const typeLabel = msg.contractType ? ` (${msg.contractType})` : '';
                     for (const signer of msg.requiredSigners) {
                         queueOrDeliver(signer, agent.team, {
                             type: 'relay:reply:delivered',
                             fromAgent: agent.name,
-                            message: `[CONTRACT] 📋 "${msg.specPath}" needs your sign-off.\nPublished by: ${agent.name}\nCall sign_contract(spec_path="${msg.specPath}") to approve.`,
+                            message: `[CONTRACT]${typeLabel} 📋 "${msg.specPath}" needs your sign-off.\nPublished by: ${agent.name}${msg.schemaValidation ? `\nSchema: format=${msg.schemaValidation.format || 'any'}, required keys: ${msg.schemaValidation.required_keys?.join(', ') || 'none'}` : ''}\nCall sign_contract(spec_path="${msg.specPath}") to approve.`,
                         });
                     }
 
@@ -534,13 +736,22 @@ export function startHub(options: HubOptions): WebSocketServer {
                     } satisfies ContractStatusBroadcast);
 
                     if (allSigned) {
-                        // Broadcast approval notification
-                        const approvalMsg = `[CONTRACT] ✅ "${msg.specPath}" APPROVED! All signers: ${contract.signers.map(s => s.name).join(', ')}. You may proceed with implementation.`;
-                        registry.broadcastToTeam(agent.team, {
+                        // Targeted approval notification to publisher
+                        queueOrDeliver(contract.publishedBy, agent.team, {
                             type: 'relay:reply:delivered',
                             fromAgent: 'Hub',
-                            message: approvalMsg,
-                        } as any);
+                            message: `[CONTRACT] ✅ "${msg.specPath}" APPROVED! All signers: ${contract.signers.map(s => s.name).join(', ')}. You may proceed with implementation.`,
+                        });
+                    } else {
+                        // Partial sign — push progress to publisher so they don't need to poll
+                        const remaining = contract.requiredSigners.filter(
+                            req => !contract.signers.some(s => s.name === req)
+                        );
+                        queueOrDeliver(contract.publishedBy, agent.team, {
+                            type: 'relay:reply:delivered',
+                            fromAgent: 'Hub',
+                            message: `[CONTRACT] "${msg.specPath}" signed by ${agent.name}. Progress: ${contract.signers.length}/${contract.requiredSigners.length}. Remaining: ${remaining.join(', ')}.`,
+                        });
                     }
 
                     if (verbose) console.log(`[Hub] Contract signed: ${msg.specPath} by ${agent.name}${allSigned ? ' → APPROVED' : ''}`);
