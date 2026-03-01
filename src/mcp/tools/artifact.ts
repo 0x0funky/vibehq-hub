@@ -20,10 +20,10 @@ function getSharedDir(team: string): string {
 export function registerPublishArtifact(server: McpServer, hub: HubClient, team: string): void {
     server.tool(
         'publish_artifact',
-        'Publish a structured artifact to the team shared folder with metadata. Use this instead of share_file when publishing important documents like specs, plans, or decisions. The team will be notified of the publication.',
+        'Publish a structured artifact with metadata. If a shared file with this name already exists (from share_file), it will NOT be overwritten — only the metadata is registered. If the file does not exist yet, you must provide content.',
         {
             filename: z.string().describe('Filename (e.g. "api-spec.md", "design-plan.md")'),
-            content: z.string().describe('File content'),
+            content: z.string().optional().describe('File content (optional if file was already created via share_file)'),
             artifact_type: z.enum(['spec', 'plan', 'report', 'decision', 'code', 'other']).describe('Type of artifact'),
             summary: z.string().describe('Brief summary of what this artifact contains'),
             relates_to: z.string().optional().describe('Optional taskId this artifact relates to'),
@@ -32,9 +32,25 @@ export function registerPublishArtifact(server: McpServer, hub: HubClient, team:
             try {
                 const dir = getSharedDir(team);
                 const filepath = join(dir, args.filename);
-                writeFileSync(filepath, args.content, 'utf-8');
+                const fileExists = existsSync(filepath);
 
-                // Notify hub about the artifact
+                if (fileExists) {
+                    // File already exists (from share_file or prior publish) — do NOT overwrite
+                    // Only register metadata with the Hub
+                } else if (args.content) {
+                    // File doesn't exist yet — write the provided content
+                    writeFileSync(filepath, args.content, 'utf-8');
+                } else {
+                    return {
+                        content: [{
+                            type: 'text' as const,
+                            text: `Error: File "${args.filename}" does not exist and no content was provided. Use share_file first or provide content.`,
+                        }],
+                        isError: true,
+                    };
+                }
+
+                // Notify hub about the artifact metadata
                 hub.publishArtifact(args.filename, args.artifact_type, args.summary, args.relates_to);
 
                 return {
@@ -45,7 +61,10 @@ export function registerPublishArtifact(server: McpServer, hub: HubClient, team:
                             filename: args.filename,
                             type: args.artifact_type,
                             summary: args.summary,
-                            note: 'Artifact published and team notified.',
+                            file_existed: fileExists,
+                            note: fileExists
+                                ? 'Metadata registered. Existing file was NOT overwritten.'
+                                : 'File created and metadata registered.',
                         }, null, 2),
                     }],
                 };
