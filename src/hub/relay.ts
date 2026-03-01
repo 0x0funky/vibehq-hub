@@ -25,13 +25,21 @@ interface PendingRequest {
     timestamp: number;
 }
 
+/**
+ * Callback type for idle-aware message delivery.
+ * Returns true if the target agent was found, false otherwise.
+ */
+export type DeliverFn = (targetName: string, team: string, payload: any) => boolean;
+
 export class RelayEngine {
     private registry: AgentRegistry;
     private pendingRequests: Map<string, PendingRequest> = new Map();
     private verbose: boolean;
+    private deliverFn: DeliverFn;
 
-    constructor(registry: AgentRegistry, verbose = false) {
+    constructor(registry: AgentRegistry, deliverFn: DeliverFn, verbose = false) {
         this.registry = registry;
+        this.deliverFn = deliverFn;
         this.verbose = verbose;
     }
 
@@ -57,9 +65,8 @@ export class RelayEngine {
             type: 'relay:question', requestId: msg.requestId, fromAgent: msg.fromAgent, question: msg.question,
         } satisfies RelayQuestionMessage;
 
-        target.ws.send(JSON.stringify(questionPayload));
-        // Also forward to spawners shadowing this agent
-        this.sendToSpawners(msg.toAgent, questionPayload);
+        // Use idle-aware delivery — queues if agent is busy
+        this.deliverFn(msg.toAgent, target.team, questionPayload);
 
         this.log(`Ask: ${msg.fromAgent} → ${msg.toAgent} [${msg.requestId}]`);
     }
@@ -105,8 +112,8 @@ export class RelayEngine {
             task: msg.task, priority: msg.priority ?? 'medium',
         } satisfies RelayTaskMessage;
 
-        target.ws.send(JSON.stringify(taskPayload));
-        this.sendToSpawners(msg.toAgent, taskPayload);
+        // Use idle-aware delivery — queues if agent is busy
+        this.deliverFn(msg.toAgent, target.team, taskPayload);
 
         this.registry.broadcastToAll({
             type: 'relay:done', fromAgent: msg.fromAgent, toAgent: msg.toAgent, requestId: msg.requestId,
@@ -131,23 +138,13 @@ export class RelayEngine {
             message: msg.message,
         } satisfies RelayReplyDeliveredMessage;
 
-        target.ws.send(JSON.stringify(replyPayload));
-        // Also forward to spawners shadowing the target agent
-        this.sendToSpawners(msg.toAgent, replyPayload);
+        // Use idle-aware delivery — queues if agent is busy
+        this.deliverFn(msg.toAgent, target.team, replyPayload);
 
         this.log(`Reply: ${fromAgentName} → ${msg.toAgent}`);
     }
 
-    /**
-     * Forward a message to all spawners subscribed to an agent name.
-     */
-    private sendToSpawners(agentName: string, payload: any): void {
-        const spawners = this.registry.getSpawnersForAgent(agentName);
-        const data = JSON.stringify(payload);
-        for (const ws of spawners) {
-            ws.send(data);
-        }
-    }
+    // sendToSpawners removed — now handled by queueOrDeliver in server.ts
 
     private log(message: string): void {
         if (this.verbose) {

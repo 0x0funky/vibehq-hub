@@ -51,6 +51,8 @@ export class AgentSpawner {
     private currentStatus: 'idle' | 'working' = 'idle';
     private ptyIdleTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly PTY_IDLE_TIMEOUT = 10000; // 10s of PTY silence = idle
+    private useJsonlDetection = false; // true for Claude/Codex (JSONL-based idle detection)
+    private pendingMessages: Array<{ type: string; msg: any }> = [];
 
     constructor(options: SpawnerOptions) {
         this.options = options;
@@ -69,9 +71,13 @@ export class AgentSpawner {
         // Start idle detection based on CLI type
         const cmd = this.options.command.toLowerCase();
         if (cmd === 'claude' || cmd.includes('claude')) {
+            this.useJsonlDetection = true;
             this.watchClaudeTranscript();
+        } else if (cmd === 'codex' || cmd.includes('codex')) {
+            this.useJsonlDetection = true;
+            this.watchCodexTranscript();
         } else {
-            // Codex / Gemini: use PTY output timeout
+            // Gemini: use PTY output timeout
             this.startPtyIdleTimer();
         }
     }
@@ -309,8 +315,11 @@ export class AgentSpawner {
         // PTY output → user stdout (direct passthrough, no parsing)
         this.ptyProcess.onData((data: string) => {
             process.stdout.write(data);
-            // Reset PTY idle timer on any output (for Codex/Gemini)
-            this.resetPtyIdleTimer();
+            // Reset PTY idle timer only for PTY-based detection (Gemini)
+            // Claude and Codex use JSONL-based detection — PTY resets would override JSONL signals
+            if (!this.useJsonlDetection) {
+                this.resetPtyIdleTimer();
+            }
         });
 
         this.ptyProcess.onExit(({ exitCode }) => {
@@ -401,24 +410,39 @@ export class AgentSpawner {
     /**
      * Inject a teammate's question into the CLI's PTY.
      * The agent should use reply_to_team MCP tool to respond.
+     * Queues the message if the agent is currently working.
      */
     private handleQuestion(msg: RelayQuestionMessage): void {
+        if (this.currentStatus !== 'idle') {
+            this.pendingMessages.push({ type: 'question', msg });
+            return;
+        }
         const prompt = `[Team question from ${msg.fromAgent}]: ${msg.question} — Use the reply_to_team tool to respond to ${msg.fromAgent}.`;
         this.writeToPty(prompt);
     }
 
     /**
      * Inject a task assignment (fire-and-forget).
+     * Queues the message if the agent is currently working.
      */
     private handleTask(msg: RelayTaskMessage): void {
+        if (this.currentStatus !== 'idle') {
+            this.pendingMessages.push({ type: 'task', msg });
+            return;
+        }
         const prompt = `[Task from ${msg.fromAgent}, priority: ${msg.priority}]: ${msg.task}`;
         this.writeToPty(prompt);
     }
 
     /**
      * Inject a teammate's reply into the CLI's PTY.
+     * Queues the message if the agent is currently working.
      */
     private handleReplyDelivered(msg: RelayReplyDeliveredMessage): void {
+        if (this.currentStatus !== 'idle') {
+            this.pendingMessages.push({ type: 'reply', msg });
+            return;
+        }
         const prompt = `[Reply from ${msg.fromAgent}]: ${msg.message}`;
         this.writeToPty(prompt);
     }
@@ -466,6 +490,26 @@ export class AgentSpawner {
         if (status === this.currentStatus) return;
         this.currentStatus = status;
         this.sendToHub({ type: 'agent:status', status });
+        // Flush any queued messages when becoming idle
+        if (status === 'idle') {
+            this.flushPendingMessages();
+        }
+    }
+
+    /**
+     * Deliver queued messages that arrived while the agent was busy.
+     */
+    private flushPendingMessages(): void {
+        if (this.pendingMessages.length === 0) return;
+        const messages = [...this.pendingMessages];
+        this.pendingMessages = [];
+        for (const { type, msg } of messages) {
+            switch (type) {
+                case 'question': this.handleQuestion(msg); break;
+                case 'task': this.handleTask(msg); break;
+                case 'reply': this.handleReplyDelivered(msg); break;
+            }
+        }
     }
 
     /**
@@ -474,10 +518,14 @@ export class AgentSpawner {
      * Detects: turn_duration → idle, assistant message → working.
      */
     private watchClaudeTranscript(): void {
-        const cwd = this.options.args.find((_, i, arr) => i > 0 && arr[i - 1] === '--cwd') || process.cwd();
-        // Claude encodes the path: / → %2F on unix, \ → %5C on windows
-        const encodedPath = cwd.replace(/[\\/:]/g, (c) => encodeURIComponent(c));
-        const sessionsDir = join(homedir(), '.claude', 'projects', encodedPath, 'sessions');
+        // Use the configured cwd (from vibehq.config), not process.cwd()
+        const cwd = this.options.cwd || this.options.args.find((_, i, arr) => i > 0 && arr[i - 1] === '--cwd') || process.cwd();
+        // Claude Code encodes project paths by replacing path separators with dashes
+        // Windows: D:\\testuse\\B -> D--testuse-B (: -> -, \\ -> -)
+        // Unix:    /home/user/project -> -home-user-project (/ -> -)
+        const encodedPath = cwd.replace(/[\\\\//:]/g, '-');
+        // Claude Code v2.1+ stores sessions directly in the project directory (no /sessions/ subdir)
+        const sessionsDir = join(homedir(), '.claude', 'projects', encodedPath);
 
         let watching = false;
         let currentFile = '';
@@ -507,10 +555,13 @@ export class AgentSpawner {
                 for (const line of lines) {
                     try {
                         const msg = JSON.parse(line);
-                        if (msg.type === 'system' && msg.subtype === 'turn_duration') {
-                            this.sendStatus('idle');
-                        } else if (msg.type === 'assistant') {
+                        // Claude v2.1+ JSONL format:
+                        // type:'user' with userType:'external' = new user input -> working
+                        // type:'assistant' with stop_reason:'end_turn' = turn complete -> idle
+                        if (msg.type === 'user' && msg.userType === 'external') {
                             this.sendStatus('working');
+                        } else if (msg.type === 'assistant' && msg.message?.stop_reason === 'end_turn') {
+                            this.sendStatus('idle');
                         }
                     } catch {
                         // skip malformed lines
@@ -543,7 +594,7 @@ export class AgentSpawner {
                 watch(dirToWatch, { recursive: true }, (_event, filename) => {
                     if (!filename || !filename.endsWith('.jsonl')) return;
 
-                    const fullPath = join(sessionsDir, typeof filename === 'string' ? filename.replace(/^sessions[\\/]/, '') : '');
+                    const fullPath = join(sessionsDir, typeof filename === 'string' ? filename : '');
                     if (existsSync(fullPath)) {
                         if (fullPath !== currentFile) {
                             currentFile = fullPath;
@@ -574,7 +625,106 @@ export class AgentSpawner {
     }
 
     /**
-     * PTY-based idle detection for Codex/Gemini.
+     * Codex CLI JSONL transcript watcher.
+     * Watches ~/.codex/sessions/YYYY/MM/DD/ for rollout-*.jsonl files.
+     * Detects: task_started → working, task_complete → idle.
+     */
+    private watchCodexTranscript(): void {
+        const sessionsDir = join(homedir(), '.codex', 'sessions');
+
+        let watching = false;
+        let currentFile = '';
+        let fileOffset = 0;
+
+        const findLatestJsonl = (): string | null => {
+            if (!existsSync(sessionsDir)) return null;
+            // Codex stores logs in YYYY/MM/DD/rollout-*.jsonl structure
+            // Walk dates in reverse to find the most recent log
+            try {
+                const years = readdirSync(sessionsDir).filter(f => /^\d{4}$/.test(f)).sort().reverse();
+                for (const year of years) {
+                    const yearDir = join(sessionsDir, year);
+                    const months = readdirSync(yearDir).filter(f => /^\d{2}$/.test(f)).sort().reverse();
+                    for (const month of months) {
+                        const monthDir = join(yearDir, month);
+                        const days = readdirSync(monthDir).filter(f => /^\d{2}$/.test(f)).sort().reverse();
+                        for (const day of days) {
+                            const dayDir = join(monthDir, day);
+                            const files = readdirSync(dayDir)
+                                .filter(f => f.startsWith('rollout-') && f.endsWith('.jsonl'))
+                                .map(f => ({ name: f, mtime: statSync(join(dayDir, f)).mtimeMs }))
+                                .sort((a, b) => b.mtime - a.mtime);
+                            if (files.length > 0) return join(dayDir, files[0].name);
+                        }
+                    }
+                }
+            } catch {
+                // directory might not exist yet
+            }
+            return null;
+        };
+
+        const tailFile = async (filepath: string) => {
+            try {
+                const stat = statSync(filepath);
+                if (stat.size <= fileOffset) return;
+
+                const fh = await open(filepath, 'r');
+                const buf = Buffer.alloc(stat.size - fileOffset);
+                await fh.read(buf, 0, buf.length, fileOffset);
+                await fh.close();
+                fileOffset = stat.size;
+
+                const lines = buf.toString('utf-8').split('\n').filter(l => l.trim());
+                for (const line of lines) {
+                    try {
+                        const msg = JSON.parse(line);
+                        // Codex event_msg types for turn lifecycle
+                        if (msg.type === 'event_msg' && msg.payload?.type === 'task_started') {
+                            this.sendStatus('working');
+                        } else if (msg.type === 'event_msg' && msg.payload?.type === 'task_complete') {
+                            this.sendStatus('idle');
+                        }
+                    } catch {
+                        // skip malformed lines
+                    }
+                }
+            } catch {
+                // file might be temporarily locked
+            }
+        };
+
+        const startWatch = () => {
+            if (watching) return;
+
+            const latest = findLatestJsonl();
+            if (latest) {
+                currentFile = latest;
+                fileOffset = statSync(latest).size; // start from end
+                watching = true;
+            }
+
+            // Poll for new/modified JSONL files
+            // Codex creates new rollout files per session, so we poll to detect new ones
+            setInterval(() => {
+                const latest = findLatestJsonl();
+                if (latest) {
+                    if (latest !== currentFile) {
+                        currentFile = latest;
+                        fileOffset = 0;
+                    }
+                    tailFile(latest);
+                }
+            }, 2000);
+        };
+
+        // Delay to let Codex CLI create session files
+        setTimeout(startWatch, 3000);
+    }
+
+    /**
+     * PTY-based idle detection for Gemini (only).
+     * Claude and Codex use JSONL-based detection instead.
      * If PTY output stops for N seconds, mark as idle.
      */
     private startPtyIdleTimer(): void {

@@ -42,7 +42,7 @@ interface QueuedMessage {
 export function startHub(options: HubOptions): WebSocketServer {
     const { port, verbose = false, team = 'default' } = options;
     const registry = new AgentRegistry(verbose);
-    const relay = new RelayEngine(registry, verbose);
+    // relay is created below, after queueOrDeliver is defined
 
     // --- Persistence ---
     const stateDir = join(homedir(), '.vibehq', 'teams', team);
@@ -137,6 +137,9 @@ export function startHub(options: HubOptions): WebSocketServer {
         }
         messageQueue.delete(agentId);
     }
+
+    // Create relay engine with idle-aware delivery
+    const relay = new RelayEngine(registry, queueOrDeliver, verbose);
 
     // Hook into registry status changes for idle flush
     registry.onStatusChange((agentId, status) => {
