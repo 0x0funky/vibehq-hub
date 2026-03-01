@@ -345,6 +345,31 @@ All presets include the full list of 20 MCP tools and enforce the contract-first
 
 ---
 
+## 📂 Team Data & Storage
+
+All team collaboration data is persisted to disk under your home directory:
+
+```
+~/.vibehq/
+  └── teams/
+      └── <team-name>/
+          ├── hub-state.json       # Team updates, tasks, artifacts, contracts
+          └── shared/              # Files shared via share_file() and publish_artifact()
+```
+
+| Data | Persisted? | Location |
+|------|-----------|----------|
+| Team updates (`post_update`) | ✅ | `hub-state.json` |
+| Tasks (`create_task`, `complete_task`) | ✅ | `hub-state.json` |
+| Contracts (`publish_contract`) | ✅ | `hub-state.json` |
+| Shared files (`share_file`) | ✅ | `shared/` folder |
+| Artifacts (`publish_artifact`) | ✅ | `shared/` folder |
+| Agent messages (`ask_teammate`, `reply_to_team`) | ❌ | Real-time relay only |
+
+> 💡 **Tip:** To review your team's collaboration history, check `~/.vibehq/teams/<team-name>/hub-state.json`. Shared files are directly accessible in the `shared/` folder.
+
+---
+
 ## 🚀 V2 Collaboration Framework — 20 MCP Tools
 
 <details>

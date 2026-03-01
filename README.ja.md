@@ -322,6 +322,31 @@ vibehq-spawn --name "Riley" --role "Backend Engineer" \
 
 ---
 
+## 📂 チームデータとストレージ
+
+すべてのチームコラボレーションデータは、ホームディレクトリにディスク永続化されます：
+
+```
+~/.vibehq/
+  └── teams/
+      └── <team-name>/
+          ├── hub-state.json       # チーム更新、タスク、成果物、契約
+          └── shared/              # share_file() と publish_artifact() で共有されたファイル
+```
+
+| データ | 永続化？ | 場所 |
+|--------|---------|------|
+| チーム更新（`post_update`） | ✅ | `hub-state.json` |
+| タスク（`create_task`、`complete_task`） | ✅ | `hub-state.json` |
+| 契約（`publish_contract`） | ✅ | `hub-state.json` |
+| 共有ファイル（`share_file`） | ✅ | `shared/` フォルダ |
+| 成果物（`publish_artifact`） | ✅ | `shared/` フォルダ |
+| エージェントメッセージ（`ask_teammate`、`reply_to_team`） | ❌ | リアルタイムリレーのみ |
+
+> 💡 **ヒント：** チームのコラボレーション履歴を確認するには、`~/.vibehq/teams/<team-name>/hub-state.json` をチェックしてください。共有ファイルは `shared/` フォルダから直接アクセスできます。
+
+---
+
 ## 🚀 V2 コラボレーションフレームワーク — 20 MCP ツール
 
 <details>

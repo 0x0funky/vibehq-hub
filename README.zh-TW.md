@@ -340,6 +340,31 @@ vibehq-spawn --name "Casey" --role "QA Engineer" \
 
 ---
 
+## 📂 團隊資料與儲存
+
+所有團隊協作資料都持久化儲存在你的 home 目錄下：
+
+```
+~/.vibehq/
+  └── teams/
+      └── <team-name>/
+          ├── hub-state.json       # 團隊更新、任務、成品、合約
+          └── shared/              # 透過 share_file() 和 publish_artifact() 分享的檔案
+```
+
+| 資料 | 已持久化？ | 位置 |
+|------|-----------|------|
+| 團隊更新（`post_update`） | ✅ | `hub-state.json` |
+| 任務（`create_task`、`complete_task`） | ✅ | `hub-state.json` |
+| 合約（`publish_contract`） | ✅ | `hub-state.json` |
+| 共享檔案（`share_file`） | ✅ | `shared/` 資料夾 |
+| 成品（`publish_artifact`） | ✅ | `shared/` 資料夾 |
+| Agent 訊息（`ask_teammate`、`reply_to_team`） | ❌ | 僅即時轉發 |
+
+> 💡 **提示：** 要查看團隊的協作歷史，請檢查 `~/.vibehq/teams/<team-name>/hub-state.json`。共享檔案可直接在 `shared/` 資料夾中取得。
+
+---
+
 ## 🚀 V2 協作框架 — 20 個 MCP 工具
 
 <details>
