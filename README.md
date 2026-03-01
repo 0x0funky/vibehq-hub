@@ -234,6 +234,7 @@ vibehq-spawn --name "Casey" --role "QA Engineer" \
 - **Terminal spawning**: The TUI uses `wt` (Windows Terminal) on Windows, `osascript` on Mac, and `gnome-terminal`/`xterm` on Linux. If your terminal emulator isn't detected, use manual `vibehq-spawn` commands instead.
 - **Claude JSONL path encoding**: Claude Code encodes project paths differently on each OS (`\` vs `/`). The watcher uses regex replacement that should handle both, but edge cases may exist.
 - **node-pty compilation**: `node-pty` requires native compilation. On Mac, ensure Xcode Command Line Tools are installed (`xcode-select --install`). On Linux, ensure `build-essential` and `python3` are available.
+- **node-pty spawn-helper permission (macOS)**: The prebuilt `spawn-helper` binary may be installed without executable permission (`0644`). Our `postinstall` script fixes this automatically. If you still see `posix_spawnp failed`, run: `chmod +x node_modules/node-pty/prebuilds/*/spawn-helper`
 - **MCP config paths**: Claude stores MCP config at `~/.claude/` on all platforms, but Codex (`~/.codex/`) and Gemini (`~/.gemini/`) paths may vary.
 - **File path separators**: Config file paths use `\\` for Windows. On Mac/Linux, use `/` instead.
 

@@ -234,6 +234,7 @@ vibehq-spawn --name "Casey" --role "QA Engineer" \
 - **終端啟動**：TUI 在 Windows 使用 `wt`，Mac 使用 `osascript`，Linux 使用 `gnome-terminal`/`xterm`。如果你的終端模擬器未被偵測到，改用手動 `vibehq-spawn` 指令。
 - **Claude JSONL 路徑編碼**：Claude Code 在不同 OS 上對專案路徑的編碼方式不同（`\` vs `/`）。監聽器使用 regex 替換來處理兩者，但可能存在邊緣情況。
 - **node-pty 編譯**：`node-pty` 需要原生編譯。Mac 請確保已安裝 Xcode Command Line Tools（`xcode-select --install`）。Linux 請確保有 `build-essential` 和 `python3`。
+- **node-pty spawn-helper 權限（macOS）**：預編譯的 `spawn-helper` 可能缺少執行權限（`0644`）。`postinstall` 腳本會自動修復。如果仍然出現 `posix_spawnp failed`，請執行：`chmod +x node_modules/node-pty/prebuilds/*/spawn-helper`
 - **MCP 設定路徑**：Claude 在所有平台存儲 MCP 設定於 `~/.claude/`，但 Codex（`~/.codex/`）和 Gemini（`~/.gemini/`）的路徑可能有所不同。
 - **檔案路徑分隔符**：設定檔案路徑在 Windows 使用 `\\`。Mac/Linux 請改用 `/`。
 

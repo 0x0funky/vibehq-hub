@@ -218,6 +218,7 @@ vibehq-spawn --name "Riley" --role "Backend Engineer" \
 - **ターミナル起動**：TUI は Windows で `wt`、Mac で `osascript`、Linux で `gnome-terminal`/`xterm` を使用。ターミナルエミュレーターが検出されない場合、手動 `vibehq-spawn` コマンドを使用。
 - **Claude JSONL パスエンコーディング**：Claude Code は OS ごとにプロジェクトパスのエンコーディングが異なる（`\` vs `/`）。ウォッチャーは両方を処理する正規表現を使用しますが、エッジケースが存在する可能性。
 - **node-pty コンパイル**：`node-pty` はネイティブコンパイルが必要。Mac では Xcode Command Line Tools（`xcode-select --install`）のインストールを確認。Linux では `build-essential` と `python3` が必要。
+- **node-pty spawn-helper 権限（macOS）**：プリビルドの `spawn-helper` バイナリに実行権限（`0644`）がない場合があります。`postinstall` スクリプトが自動的に修正します。`posix_spawnp failed` が発生する場合：`chmod +x node_modules/node-pty/prebuilds/*/spawn-helper`
 - **ファイルパス区切り文字**：設定ファイルのパスは Windows で `\\` を使用。Mac/Linux では `/` を使用。
 
 > 🍎 **Mac テストは近日予定。** 検証完了後、このセクションは確認済みサポート状態に更新されます。

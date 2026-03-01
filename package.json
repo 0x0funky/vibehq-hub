@@ -15,6 +15,7 @@
     "dist/"
   ],
   "scripts": {
+    "postinstall": "node -e \"try{require('fs').readdirSync('node_modules/node-pty/prebuilds').forEach(d=>{const p=require('path').join('node_modules/node-pty/prebuilds',d,'spawn-helper');try{require('fs').chmodSync(p,0o755)}catch(e){}});}catch(e){}\"",
     "build": "tsup",
     "dev": "tsup --watch"
   },
