@@ -106,6 +106,32 @@
                     ]
                 }
             ]
+        },
+        {
+            "name": "test-dedup",
+            "hub": {
+                "port": 3003
+            },
+            "agents": [
+                {
+                    "name": "Alice",
+                    "role": "Project Manager",
+                    "cli": "codex",
+                    "cwd": "D:\\test-team\\pm"
+                },
+                {
+                    "name": "Bob",
+                    "role": "Frontend Engineer",
+                    "cli": "codex",
+                    "cwd": "D:\\test-team\\frontend"
+                },
+                {
+                    "name": "Charlie",
+                    "role": "Backend Engineer",
+                    "cli": "codex",
+                    "cwd": "D:\\test-team\\backend"
+                }
+            ]
         }
     ]
 }

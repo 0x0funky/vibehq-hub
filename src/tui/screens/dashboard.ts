@@ -114,6 +114,7 @@ export class DashboardScreen {
                     role: msg.role || '',
                     capabilities: [],
                     status: msg.status,
+                    cli: msg.cli,
                 });
                 this.render();
                 break;
@@ -164,7 +165,7 @@ export class DashboardScreen {
         for (const agent of this.agents.values()) {
             const statusColor = agent.status === 'idle' ? c.green : agent.status === 'working' ? c.yellow : c.magenta;
             const dot = `${statusColor}●${c.reset}`;
-            const cli = this.config.agents.find(a => a.name === agent.name)?.cli || '?';
+            const cli = agent.cli || this.config.agents.find(a => a.name === agent.name)?.cli || '?';
             const statusStr = `${statusColor}${agent.status}${c.reset}`;
             out += `${bc}│${c.reset}  ${dot} ${padRight(c.bold + agent.name + c.reset, 11 + c.bold.length + c.reset.length)}${padRight(agent.role || '—', 24)}${padRight(`[${cli}]`, 10)}${padRight(statusStr, 10 + statusColor.length + c.reset.length)}${bc}│${c.reset}\n`;
         }

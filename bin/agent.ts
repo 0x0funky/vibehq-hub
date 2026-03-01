@@ -4,13 +4,14 @@
 
 import { startAgent } from '../src/mcp/server.js';
 
-function parseArgs(): { name: string; role: string; hub: string; team: string; timeout: number } {
+function parseArgs(): { name: string; role: string; hub: string; team: string; timeout: number; cli: string } {
     const args = process.argv.slice(2);
     let name = '';
     let role = 'Engineer';
     let hub = 'ws://localhost:3001';
     let team = 'default';
     let timeout = 120000;
+    let cli = '';
 
     for (let i = 0; i < args.length; i++) {
         switch (args[i]) {
@@ -37,6 +38,9 @@ function parseArgs(): { name: string; role: string; hub: string; team: string; t
                     process.exit(1);
                 }
                 break;
+            case '--cli':
+                cli = args[++i];
+                break;
             case '-h':
             case '--help':
                 console.log(`
@@ -62,8 +66,8 @@ Options:
         process.exit(1);
     }
 
-    return { name, role, hub, team, timeout };
+    return { name, role, hub, team, timeout, cli };
 }
 
-const { name, role, hub, team, timeout } = parseArgs();
-startAgent({ name, role, hubUrl: hub, team, askTimeout: timeout });
+const { name, role, hub, team, timeout, cli } = parseArgs();
+startAgent({ name, role, hubUrl: hub, team, askTimeout: timeout, cli });

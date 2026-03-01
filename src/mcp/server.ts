@@ -22,10 +22,11 @@ export interface AgentOptions {
     hubUrl: string;
     team?: string;
     askTimeout?: number;
+    cli?: string;
 }
 
 export async function startAgent(options: AgentOptions): Promise<void> {
-    const { name, role, hubUrl, team = 'default', askTimeout = 120000 } = options;
+    const { name, role, hubUrl, team = 'default', askTimeout = 120000, cli } = options;
 
     // Create MCP server
     const server = new McpServer({
@@ -34,7 +35,7 @@ export async function startAgent(options: AgentOptions): Promise<void> {
     });
 
     // Create Hub client
-    const hub = new HubClient(hubUrl, name, role, team, askTimeout);
+    const hub = new HubClient(hubUrl, name, role, team, askTimeout, cli);
 
     // Register all MCP tools
     registerListTeammates(server, hub);

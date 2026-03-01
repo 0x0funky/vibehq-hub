@@ -30,8 +30,24 @@ export class AgentRegistry {
      * Register a new agent upon WS connection.
      */
     register(ws: WebSocket, msg: AgentRegisterMessage): ConnectedAgent {
-        const agentId = randomUUID();
         const team = msg.team || 'default';
+
+        // --- Dedup: kick any existing agent with same name + team ---
+        for (const [existingWs, existingAgent] of this.agents) {
+            if (existingAgent.name.toLowerCase() === msg.name.toLowerCase() && existingAgent.team === team) {
+                this.log(`Dedup: kicking old connection for ${existingAgent.name} (${existingAgent.id})`);
+                this.agents.delete(existingWs);
+                // Broadcast disconnect for old instance
+                this.broadcastToTeam(team, {
+                    type: 'agent:disconnected',
+                    agentId: existingAgent.id,
+                    name: existingAgent.name,
+                } satisfies AgentDisconnectedMessage);
+                try { existingWs.close(); } catch { }
+            }
+        }
+
+        const agentId = randomUUID();
         const agent: ConnectedAgent = {
             id: agentId,
             name: msg.name,
@@ -39,6 +55,7 @@ export class AgentRegistry {
             capabilities: msg.capabilities ?? [],
             status: 'idle',
             team,
+            cli: msg.cli,
             ws,
         };
 
@@ -60,6 +77,7 @@ export class AgentRegistry {
             name: agent.name,
             role: agent.role,
             status: agent.status,
+            cli: agent.cli,
         } satisfies AgentStatusBroadcastMessage, ws);
 
         this.log(`Agent registered: ${agent.name} (${agent.role}) [${agentId}] team=${team}`);
@@ -162,6 +180,7 @@ export class AgentRegistry {
             name: agent.name,
             role: agent.role,
             status: agent.status,
+            cli: agent.cli,
         } satisfies AgentStatusBroadcastMessage, ws);
 
         // Fire status change callbacks (for idle-aware queue flush)

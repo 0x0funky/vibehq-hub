@@ -54,19 +54,21 @@ export class HubClient extends EventEmitter {
     private agentId: string | null = null;
     private teammates: Map<string, Agent> = new Map();
     private askTimeout: number;
+    private agentCli: string | undefined;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private pendingUpdateRequests: Map<string, (updates: TeamUpdate[]) => void> = new Map();
     private pendingTaskListRequests: Map<string, (tasks: TaskState[]) => void> = new Map();
     private pendingArtifactListRequests: Map<string, (artifacts: ArtifactMeta[]) => void> = new Map();
     private pendingContractCheckRequests: Map<string, (contracts: ContractState[]) => void> = new Map();
 
-    constructor(hubUrl: string, name: string, role: string, team = 'default', askTimeout = 120000) {
+    constructor(hubUrl: string, name: string, role: string, team = 'default', askTimeout = 120000, cli?: string) {
         super();
         this.hubUrl = hubUrl;
         this.agentName = name;
         this.agentRole = role;
         this.agentTeam = team;
         this.askTimeout = askTimeout;
+        this.agentCli = cli;
     }
 
     /**
@@ -84,6 +86,7 @@ export class HubClient extends EventEmitter {
                         name: this.agentName,
                         role: this.agentRole,
                         team: this.agentTeam,
+                        cli: this.agentCli,
                     } satisfies AgentRegisterMessage);
                 });
 

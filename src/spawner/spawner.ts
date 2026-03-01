@@ -39,6 +39,7 @@ export interface SpawnerOptions {
     systemPrompt?: string;
     dangerouslySkipPermissions?: boolean;
     additionalDirs?: string[];
+    cwd?: string;
 }
 
 export class AgentSpawner {
@@ -147,6 +148,7 @@ export class AgentSpawner {
     /**
      * Update ~/.claude.json project-scoped MCP config for Claude Code.
      * Claude Code stores MCP config at: projects["<cwd>"].mcpServers
+     * Uses agent-specific key `vibehq_{name}` to avoid race conditions.
      */
     private configureClaudeMcp(name: string, role: string, hubUrl: string, team: string): void {
         const claudeJsonPath = join(homedir(), '.claude.json');
@@ -157,13 +159,16 @@ export class AgentSpawner {
         if (!config.projects) config.projects = {};
 
         // Claude Code uses forward-slash path keys on Windows
-        const cwd = process.cwd();
+        const cwd = this.options.cwd || process.cwd();
         const cwdForward = cwd.replace(/\\/g, '/');
+
+        // Agent-specific key prevents concurrent spawn overwrites
+        const serverKey = `vibehq_${name.toLowerCase().replace(/\s+/g, '_')}`;
 
         const teamServer = {
             type: 'stdio',
             command: 'vibehq-agent',
-            args: ['--name', name, '--role', role, '--hub', hubUrl, '--team', team],
+            args: ['--name', name, '--role', role, '--hub', hubUrl, '--team', team, '--cli', this.options.command],
             env: {},
         };
 
@@ -173,7 +178,9 @@ export class AgentSpawner {
             const normalizedKey = key.replace(/\\/g, '/').toLowerCase();
             if (normalizedKey === cwdForward.toLowerCase()) {
                 if (!config.projects[key].mcpServers) config.projects[key].mcpServers = {};
-                config.projects[key].mcpServers.team = teamServer;
+                // Remove legacy shared 'team' key if present
+                delete config.projects[key].mcpServers.team;
+                config.projects[key].mcpServers[serverKey] = teamServer;
                 found = true;
             }
         }
@@ -182,7 +189,7 @@ export class AgentSpawner {
         if (!found) {
             config.projects[cwdForward] = {
                 allowedTools: [],
-                mcpServers: { team: teamServer },
+                mcpServers: { [serverKey]: teamServer },
                 hasTrustDialogAccepted: true,
             };
         }
@@ -192,6 +199,8 @@ export class AgentSpawner {
 
     /**
      * Update ~/.codex/config.toml for Codex CLI.
+     * Uses agent-specific key `vibehq_{name}` to avoid race conditions.
+     * Cleans ALL vibehq_* entries first (global config → only this agent's entry needed).
      */
     private configureCodexMcp(name: string, role: string, hubUrl: string, team: string): void {
         const configPath = join(homedir(), '.codex', 'config.toml');
@@ -199,12 +208,17 @@ export class AgentSpawner {
 
         let content = readFileSync(configPath, 'utf-8');
 
-        // Remove existing [mcp_servers.team] block if present
+        // Agent-specific key
+        const serverKey = `vibehq_${name.toLowerCase().replace(/\s+/g, '_')}`;
+
+        // Remove ALL vibehq_* entries (stale entries from other teams/agents)
+        content = content.replace(/\[mcp_servers\.vibehq_[^\]]+\]\s*\n(?:(?!\[).*\n)*/g, '');
+        // Also remove legacy shared 'team' key
         content = content.replace(/\[mcp_servers\.team\]\s*\n(?:(?!\[).*\n)*/g, '');
         content = content.trimEnd();
 
-        // Append new team config
-        const teamBlock = `\n\n[mcp_servers.team]\ncommand = "vibehq-agent"\nargs = ["--name", "${name}", "--role", "${role}", "--hub", "${hubUrl}", "--team", "${team}"]\n`;
+        // Append only this agent's config
+        const teamBlock = `\n\n[mcp_servers.${serverKey}]\ncommand = "vibehq-agent"\nargs = ["--name", "${name}", "--role", "${role}", "--hub", "${hubUrl}", "--team", "${team}", "--cli", "${this.options.command}"]\n`;
         content += teamBlock;
 
         writeFileSync(configPath, content);
@@ -212,6 +226,8 @@ export class AgentSpawner {
 
     /**
      * Update ~/.gemini/settings.json for Gemini CLI.
+     * Uses agent-specific key `vibehq_{name}` to avoid race conditions.
+     * Cleans ALL vibehq_* entries first (global config → only this agent's entry needed).
      */
     private configureGeminiMcp(name: string, role: string, hubUrl: string, team: string): void {
         const configPath = join(homedir(), '.gemini', 'settings.json');
@@ -222,9 +238,21 @@ export class AgentSpawner {
         }
 
         if (!config.mcpServers) config.mcpServers = {};
-        config.mcpServers.team = {
+
+        // Agent-specific key
+        const serverKey = `vibehq_${name.toLowerCase().replace(/\s+/g, '_')}`;
+
+        // Remove ALL vibehq_* entries and legacy 'team' key
+        for (const key of Object.keys(config.mcpServers)) {
+            if (key.startsWith('vibehq_') || key === 'team') {
+                delete config.mcpServers[key];
+            }
+        }
+
+        // Write only this agent's entry
+        config.mcpServers[serverKey] = {
             command: 'vibehq-agent',
-            args: ['--name', name, '--role', role, '--hub', hubUrl, '--team', team],
+            args: ['--name', name, '--role', role, '--hub', hubUrl, '--team', team, '--cli', this.options.command],
         };
 
         writeFileSync(configPath, JSON.stringify(config, null, 2));
@@ -257,7 +285,7 @@ export class AgentSpawner {
             name: 'xterm-color',
             cols,
             rows,
-            cwd: process.cwd(),
+            cwd: this.options.cwd || process.cwd(),
             env: process.env as { [key: string]: string },
         });
 

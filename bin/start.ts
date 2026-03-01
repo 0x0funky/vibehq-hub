@@ -247,14 +247,19 @@ function spawnOneAgent(agent: AgentConfig, team: TeamConfig, hubUrl: string): vo
     }
 }
 
-// --- Spawn agents ---
-function spawnAgents(team: TeamConfig): void {
+// --- Spawn agents (with staggered delay to prevent config write contention) ---
+async function spawnAgents(team: TeamConfig): Promise<void> {
     const hubUrl = `ws://localhost:${team.hub.port}`;
     spawnedAgentNames = team.agents.map(a => a.name);
 
-    for (const agent of team.agents) {
+    for (let i = 0; i < team.agents.length; i++) {
+        const agent = team.agents[i];
         spawnOneAgent(agent, team, hubUrl);
         console.log(`  ${c.green}↗${c.reset} ${c.bold}${agent.name}${c.reset} ${c.dim}(${agent.cli})${c.reset} → ${c.gray}${agent.cwd}${c.reset}`);
+        // Wait between spawns to prevent MCP config write races
+        if (i < team.agents.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+        }
     }
 }
 
@@ -278,7 +283,7 @@ async function startTeam(configPath: string): Promise<void> {
             console.log(`\n  ${c.bold}${c.brightCyan}⚡ Team "${team.name}"${c.reset}  ${c.dim}(hub already running on port ${team.hub.port})${c.reset}\n`);
             console.log(`  ${c.bold}Spawning ${team.agents.length} agent${team.agents.length !== 1 ? 's' : ''}...${c.reset}\n`);
             await new Promise(r => setTimeout(r, 500));
-            spawnAgents(team);
+            await spawnAgents(team);
             console.log(`\n  ${c.dim}Opening dashboard in 2s...${c.reset}\n`);
             await new Promise(r => setTimeout(r, 2000));
             await runDashboard({ team: team.name, hub: team.hub, agents: team.agents });
@@ -316,7 +321,7 @@ async function startTeam(configPath: string): Promise<void> {
     const teamWithActualPort = { ...team, hub: { port: actualPort } };
     console.log(`  ${c.bold}Spawning ${team.agents.length} agent${team.agents.length !== 1 ? 's' : ''}...${c.reset}\n`);
     await new Promise(r => setTimeout(r, 800));
-    spawnAgents(teamWithActualPort);
+    await spawnAgents(teamWithActualPort);
 
     // Launch dashboard
     console.log(`\n  ${c.dim}Opening dashboard in 3s... Press [q] to return to menu${c.reset}\n`);
