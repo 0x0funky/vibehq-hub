@@ -200,22 +200,36 @@ function spawnOneAgent(agent: AgentConfig, team: TeamConfig, hubUrl: string): vo
         exec(wtCmd);
 
     } else if (process.platform === 'darwin') {
-        // Mac: try iTerm2 first, fall back to Terminal.app
+        // Mac: create a temp launcher script to avoid quoting issues with osascript
+        const launcherPath = `${tmpdir()}/vibehq-launch-${agent.name.replace(/\s/g, '_')}-${Date.now()}.sh`;
+        writeFileSync(launcherPath, `#!/bin/bash\ncd '${agent.cwd.replace(/'/g, "'\\''")}'\n${safeCmd}\nexec bash\n`, { mode: 0o755 });
+
+        // Escape for AppleScript double-quoted strings
+        const asLauncher = launcherPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+        // Try iTerm2 first, then Terminal.app, then open command
         const iTermScript = `osascript -e '
             tell application "iTerm2"
                 create window with default profile
                 tell current session of current window
-                    write text "cd ${agent.cwd.replace(/'/g, "\\'")} && ${safeCmd}"
+                    write text "bash \\"${asLauncher}\\""
                 end tell
             end tell' 2>/dev/null`;
         const terminalScript = `osascript -e '
             tell application "Terminal"
-                do script "cd ${agent.cwd.replace(/'/g, "\\'")} && ${safeCmd}"
+                do script "bash \\"${asLauncher}\\""
                 activate
-            end tell'`;
+            end tell' 2>/dev/null`;
 
         exec(iTermScript, (err) => {
-            if (err) exec(terminalScript);
+            if (err) {
+                exec(terminalScript, (err2) => {
+                    if (err2) {
+                        // Last resort: open Terminal.app with the script directly
+                        exec(`open -a Terminal.app "${launcherPath}"`);
+                    }
+                });
+            }
         });
 
     } else {
