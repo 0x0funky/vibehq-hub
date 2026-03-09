@@ -54,6 +54,7 @@ export class AgentSpawner {
     private useJsonlDetection = false; // true for Claude/Codex (JSONL-based idle detection)
     private pendingMessages: Array<{ type: string; msg: any }> = [];
     private endTurnDebounce: ReturnType<typeof setTimeout> | null = null;
+    private currentLogFile: string | null = null;
 
     constructor(options: SpawnerOptions) {
         this.options = options;
@@ -682,6 +683,7 @@ export class AgentSpawner {
             if (latest) {
                 currentFile = latest;
                 fileOffset = statSync(latest).size; // start from end
+                this.saveLogPath(latest);
                 watching = true;
             }
 
@@ -702,6 +704,7 @@ export class AgentSpawner {
                         if (fullPath !== currentFile) {
                             currentFile = fullPath;
                             fileOffset = 0;
+                            this.saveLogPath(fullPath);
                         }
                         tailFile(fullPath);
                     }
@@ -739,11 +742,11 @@ export class AgentSpawner {
         let currentFile = '';
         let fileOffset = 0;
 
-        const findLatestJsonl = (): string | null => {
-            if (!existsSync(sessionsDir)) return null;
-            // Codex stores logs in YYYY/MM/DD/rollout-*.jsonl structure
-            // Walk dates in reverse to find the most recent log
+        // Scan all recent rollout files, return sorted by mtime desc
+        const scanAllRollouts = (): { path: string; mtime: number; size: number }[] => {
+            if (!existsSync(sessionsDir)) return [];
             try {
+                const results: { path: string; mtime: number; size: number }[] = [];
                 const years = readdirSync(sessionsDir).filter(f => /^\d{4}$/.test(f)).sort().reverse();
                 for (const year of years) {
                     const yearDir = join(sessionsDir, year);
@@ -753,19 +756,30 @@ export class AgentSpawner {
                         const days = readdirSync(monthDir).filter(f => /^\d{2}$/.test(f)).sort().reverse();
                         for (const day of days) {
                             const dayDir = join(monthDir, day);
-                            const files = readdirSync(dayDir)
+                            readdirSync(dayDir)
                                 .filter(f => f.startsWith('rollout-') && f.endsWith('.jsonl'))
-                                .map(f => ({ name: f, mtime: statSync(join(dayDir, f)).mtimeMs }))
-                                .sort((a, b) => b.mtime - a.mtime);
-                            if (files.length > 0) return join(dayDir, files[0].name);
+                                .forEach(f => {
+                                    const fullPath = join(dayDir, f);
+                                    const st = statSync(fullPath);
+                                    results.push({ path: fullPath, mtime: st.mtimeMs, size: st.size });
+                                });
                         }
                     }
                 }
+                return results.sort((a, b) => b.mtime - a.mtime);
             } catch {
-                // directory might not exist yet
+                return [];
             }
-            return null;
         };
+
+        // Snapshot all rollout files BEFORE Codex starts writing, so we can detect which new file it creates
+        const preExistingFiles = new Set(scanAllRollouts().map(f => f.path));
+        let lockedOn = false;
+        let lastKnownSize = 0;
+        let staleTicks = 0;
+        // After lock-on, snapshot sizes of all files to detect session switches via /resume
+        const sizeSnapshot = new Map<string, number>();
+        for (const f of scanAllRollouts()) sizeSnapshot.set(f.path, f.size);
 
         const tailFile = async (filepath: string) => {
             try {
@@ -800,24 +814,64 @@ export class AgentSpawner {
         const startWatch = () => {
             if (watching) return;
 
-            const latest = findLatestJsonl();
-            if (latest) {
-                currentFile = latest;
-                fileOffset = statSync(latest).size; // start from end
-                watching = true;
-            }
-
-            // Poll for new/modified JSONL files
-            // Codex creates new rollout files per session, so we poll to detect new ones
+            // Phase 1: Wait for our Codex process to create its rollout file.
+            // It will be a NEW file that didn't exist in preExistingFiles.
             setInterval(() => {
-                const latest = findLatestJsonl();
-                if (latest) {
-                    if (latest !== currentFile) {
-                        currentFile = latest;
+                if (!lockedOn) {
+                    const all = scanAllRollouts();
+                    const newFile = all.find(f => !preExistingFiles.has(f.path));
+                    if (newFile) {
+                        currentFile = newFile.path;
                         fileOffset = 0;
+                        lastKnownSize = newFile.size;
+                        lockedOn = true;
+                        this.saveLogPath(currentFile);
+                        watching = true;
+                        // Update snapshot with the new file
+                        sizeSnapshot.set(newFile.path, newFile.size);
                     }
-                    tailFile(latest);
+                    return;
                 }
+
+                // Phase 2: Locked on — tail our file, but detect session switches.
+                if (currentFile && existsSync(currentFile)) {
+                    const st = statSync(currentFile);
+                    if (st.size > lastKnownSize) {
+                        // Our file is still growing — all good
+                        lastKnownSize = st.size;
+                        staleTicks = 0;
+                        tailFile(currentFile);
+                        // Update snapshot
+                        sizeSnapshot.set(currentFile, st.size);
+                        return;
+                    }
+                }
+
+                staleTicks++;
+
+                if (staleTicks < 5) {
+                    // Grace period (10s) — user might just be thinking
+                    if (currentFile) tailFile(currentFile);
+                    return;
+                }
+
+                // Our file has been stale for 10s+ — check if user did /resume
+                // (switched to a different rollout file)
+                const all = scanAllRollouts();
+                for (const f of all) {
+                    const prevSize = sizeSnapshot.get(f.path) ?? 0;
+                    if (f.size > prevSize && f.path !== currentFile) {
+                        // A different file is growing — user switched sessions
+                        currentFile = f.path;
+                        fileOffset = prevSize; // read only the new data
+                        lastKnownSize = f.size;
+                        staleTicks = 0;
+                        this.saveLogPath(currentFile);
+                    }
+                    sizeSnapshot.set(f.path, f.size);
+                }
+
+                if (currentFile) tailFile(currentFile);
             }, 2000);
         };
 
@@ -847,6 +901,35 @@ export class AgentSpawner {
         this.ptyIdleTimer = setTimeout(() => {
             this.sendStatus('idle');
         }, timeout);
+    }
+
+    /**
+     * Record the active log file path to disk for post-run analysis.
+     * Writes to ~/.vibehq/teams/<team>/agent-logs.json
+     */
+    private saveLogPath(logPath: string): void {
+        if (logPath === this.currentLogFile) return;
+        this.currentLogFile = logPath;
+
+        const team = this.options.team || 'default';
+        const logsFile = join(homedir(), '.vibehq', 'teams', team, 'agent-logs.json');
+
+        try {
+            let logs: Record<string, { path: string; cli: string; updatedAt: string }> = {};
+            if (existsSync(logsFile)) {
+                logs = JSON.parse(readFileSync(logsFile, 'utf-8'));
+            }
+            logs[this.options.name] = {
+                path: logPath,
+                cli: this.options.command,
+                updatedAt: new Date().toISOString(),
+            };
+            const dir = join(homedir(), '.vibehq', 'teams', team);
+            if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+            writeFileSync(logsFile, JSON.stringify(logs, null, 2));
+        } catch {
+            // non-critical, don't crash spawner
+        }
     }
 
     private cleanup(): void {

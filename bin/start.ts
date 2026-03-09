@@ -16,6 +16,12 @@ import { settingsScreen } from '../src/tui/screens/settings.js';
 import { getPresetByRole } from '../src/tui/role-presets.js';
 import { selectMenu } from '../src/tui/menu.js';
 import { prompt } from '../src/tui/input.js';
+import { resolveTeamLogs } from '../src/analyzer/log-resolver.js';
+import {
+    parseLogFile, extractMetrics, detectPatterns,
+    formatReport, saveRun, formatReportCard,
+    runLlmAnalysis, shouldTriggerLlm, saveReportCard,
+} from '../src/analyzer/index.js';
 
 // --- Running hub tracker ---
 let runningHub: { wss: WebSocketServer; port: number } | null = null;
@@ -380,6 +386,107 @@ async function dashboardOnly(configPath: string): Promise<void> {
     await runDashboard(dashConfig);
 }
 
+// --- Analyze team flow ---
+async function analyzeTeam(configPath: string): Promise<void> {
+    const teams = loadTeams(configPath);
+    if (!teams || teams.length === 0) {
+        console.log(`\n  ${c.yellow}!${c.reset} No teams found in ${c.bold}${configPath}${c.reset}\n`);
+        await new Promise(r => setTimeout(r, 1500));
+        return;
+    }
+
+    const team = await selectTeam(teams);
+    process.stdout.write(screen.clear);
+    console.log(`\n  ${c.bold}${c.brightCyan}Analyzing team "${team.name}"${c.reset}\n`);
+
+    // Resolve log files for each agent
+    console.log(`  ${c.dim}Scanning log locations for ${team.agents.length} agents...${c.reset}\n`);
+    const allLogs = resolveTeamLogs(team.agents, team.name);
+
+    if (allLogs.length === 0) {
+        console.log(`  ${c.yellow}!${c.reset} No JSONL log files found for this team's agents.`);
+        console.log(`  ${c.dim}Logs are auto-detected from:${c.reset}`);
+        console.log(`  ${c.dim}  Claude: ~/.claude/projects/<encoded-cwd>/*.jsonl${c.reset}`);
+        console.log(`  ${c.dim}  Codex:  ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl${c.reset}`);
+        console.log('');
+        // Show what paths were checked
+        for (const agent of team.agents) {
+            const label = agent.cli === 'codex' ? '~/.codex/sessions/' : `~/.claude/projects/${agent.cwd.replace(/[\\\\//:]/g, '-')}/`;
+            console.log(`    ${c.dim}${agent.name} (${agent.cli}) -> ${label}${c.reset}`);
+        }
+        console.log('');
+        await prompt('Press Enter to return', '');
+        return;
+    }
+
+    // Show found logs with dates (no auto-filtering)
+    console.log(`  Found ${c.bold}${allLogs.length}${c.reset} log file(s):\n`);
+    for (const log of allLogs) {
+        const date = new Date(log.mtime);
+        const dateStr = date.toLocaleString();
+        const sourceTag = log.source === 'recorded' ? `${c.green}recorded${c.reset}` : `${c.yellow}auto-detected${c.reset}`;
+        console.log(`    ${c.green}+${c.reset} ${c.bold}${log.agent}${c.reset} ${c.dim}(${log.cli})${c.reset} [${sourceTag}] — ${dateStr}`);
+        console.log(`      ${c.dim}${log.path}${c.reset}`);
+    }
+    console.log('');
+
+    // Confirm before proceeding
+    process.stdout.write(cursor.show);
+    const proceed = await prompt('Analyze these logs? (y/n)', 'y');
+    if (proceed.toLowerCase() !== 'y') return;
+
+    // Parse all logs
+    const events = allLogs.flatMap(l => parseLogFile(l.path));
+    if (events.length === 0) {
+        console.log(`  ${c.yellow}!${c.reset} No events found in log files.\n`);
+        await prompt('Press Enter to return', '');
+        return;
+    }
+
+    // Run analysis pipeline
+    const metrics = extractMetrics(events, `${team.name}-${new Date().toISOString().slice(0, 10)}`);
+    const flags = detectPatterns(metrics);
+
+    // Display report
+    console.log(formatReport(metrics, flags));
+
+    // LLM analysis hint
+    if (shouldTriggerLlm(flags)) {
+        console.log(`\n  ${c.yellow}!${c.reset} High-severity flags detected.`);
+    }
+
+    // Post-report menu
+    console.log('');
+    process.stdout.write(cursor.show);
+    const action = await selectMenu([
+        { label: 'Save to history ', description: `~/.vibehq/analytics/runs/${metrics.runId}/`, value: 'save' },
+        { label: 'Save + LLM     ', description: 'Save and run LLM deep analysis', value: 'save-llm' },
+        { label: 'Back to menu   ', description: '', value: 'back' },
+    ], 'Actions');
+
+    if (action === 'save' || action === 'save-llm') {
+        const rawPaths = allLogs.map(l => l.path);
+        const runDir = saveRun(metrics, flags, rawPaths);
+        console.log(`\n  ${c.green}+${c.reset} Saved to ${c.dim}${runDir}${c.reset}`);
+
+        if (action === 'save-llm') {
+            try {
+                console.log(`  ${c.dim}Running LLM analysis...${c.reset}`);
+                const reportCard = await runLlmAnalysis(metrics, flags, events);
+                saveReportCard(metrics.runId, reportCard);
+                console.log('');
+                console.log(formatReportCard(reportCard));
+                console.log(`\n  ${c.green}+${c.reset} Report card saved.`);
+            } catch (e) {
+                console.log(`\n  ${c.yellow}!${c.reset} LLM analysis failed: ${(e as Error).message}`);
+            }
+        }
+    }
+
+    console.log('');
+    await prompt('Press Enter to return', '');
+}
+
 // --- Interactive mode ---
 async function interactive(configPath: string): Promise<void> {
     while (true) {
@@ -406,6 +513,10 @@ async function interactive(configPath: string): Promise<void> {
             case 'dashboard':
                 await dashboardOnly(configPath);
                 break; // Returns to menu on [b]
+
+            case 'analyze':
+                await analyzeTeam(configPath);
+                break;
 
             case 'settings':
                 await settingsScreen(configPath);

@@ -49,6 +49,7 @@ export async function welcomeScreen(): Promise<string> {
         { label: 'Start Team     ', description: 'Launch agents from config', value: 'start' },
         { label: 'Create Team    ', description: 'Setup a new team with wizard', value: 'create' },
         { label: 'Dashboard      ', description: 'Monitor a running team', value: 'dashboard' },
+        { label: 'Analyze        ', description: 'Post-run analytics & reports', value: 'analyze' },
         { label: 'Settings       ', description: 'Edit teams, ports & agents', value: 'settings' },
         { label: 'Quit           ', description: '', value: 'quit' },
     ], '⚡ VibeHQ');

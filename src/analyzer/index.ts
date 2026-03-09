@@ -9,4 +9,5 @@ export {
 export {
   runLlmAnalysis, sampleMessages, shouldTriggerLlm, formatReportCard,
 } from './llm-analyst.js';
+export { resolveTeamLogs, filterSessionWindow } from './log-resolver.js';
 export type * from './types.js';
