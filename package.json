@@ -10,26 +10,43 @@
     "vibehq-hub": "./dist/bin/hub.js",
     "vibehq-agent": "./dist/bin/agent.js",
     "vibehq-spawn": "./dist/bin/spawn.js",
-    "vibehq-analyze": "./dist/bin/analyze.js"
+    "vibehq-analyze": "./dist/bin/analyze.js",
+    "vibehq-web": "./dist/bin/web.js"
   },
   "files": [
-    "dist/"
+    "dist/",
+    "web-dist/"
   ],
   "scripts": {
     "postinstall": "node -e \"try{require('fs').readdirSync('node_modules/node-pty/prebuilds').forEach(d=>{const p=require('path').join('node_modules/node-pty/prebuilds',d,'spawn-helper');try{require('fs').chmodSync(p,0o755)}catch(e){}});}catch(e){}\"",
     "build": "tsup",
-    "dev": "tsup --watch"
+    "build:web": "cd web && npx vite build",
+    "build:all": "npm run build:web && npm run build",
+    "dev": "tsup --watch",
+    "dev:web": "cd web && npx vite"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.0",
+    "express": "^5.2.1",
     "node-pty": "^1.1.0",
     "ws": "^8.16.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^20.11.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.5.10",
+    "@vitejs/plugin-react": "^5.1.4",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.13.1",
     "tsup": "^8.0.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "vite": "^7.3.1",
+    "xterm": "^5.3.0"
   },
   "keywords": [
     "mcp",

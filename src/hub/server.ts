@@ -4,7 +4,7 @@
 
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { AgentRegistry } from './registry.js';
@@ -33,19 +33,31 @@ export interface HubOptions {
     team?: string;
 }
 
+export interface HubContext {
+    wss: WebSocketServer;
+    registry: AgentRegistry;
+    stores: {
+        tasks: Map<string, TaskState>;
+        artifacts: Map<string, ArtifactMeta>;
+        contracts: Map<string, ContractState>;
+        teamUpdates: Map<string, TeamUpdate[]>;
+    };
+}
+
 // --- Queued message for idle-aware delivery ---
 interface QueuedMessage {
     payload: any;
     timestamp: number;
 }
 
-export function startHub(options: HubOptions): WebSocketServer {
+export function startHub(options: HubOptions): HubContext {
     const { port, verbose = false, team = 'default' } = options;
     const registry = new AgentRegistry(verbose);
     // relay is created below, after queueOrDeliver is defined
 
     // --- Persistence ---
-    const stateDir = join(homedir(), '.vibehq', 'teams', team);
+    const teamsBaseDir = join(homedir(), '.vibehq', 'teams');
+    const stateDir = join(teamsBaseDir, team);
     const stateFile = join(stateDir, 'hub-state.json');
 
     interface HubState {
@@ -55,16 +67,36 @@ export function startHub(options: HubOptions): WebSocketServer {
         contracts: Record<string, ContractState>;
     }
 
-    function loadState(): HubState {
+    function loadTeamState(teamDir: string): HubState {
+        const file = join(teamDir, 'hub-state.json');
         try {
-            if (existsSync(stateFile)) {
-                const raw = readFileSync(stateFile, 'utf-8');
+            if (existsSync(file)) {
+                const raw = readFileSync(file, 'utf-8');
                 return JSON.parse(raw);
             }
         } catch (err) {
-            if (verbose) console.log(`[Hub] Could not load state: ${(err as Error).message}`);
+            if (verbose) console.log(`[Hub] Could not load state from ${file}: ${(err as Error).message}`);
         }
         return { teamUpdates: {}, tasks: {}, artifacts: {}, contracts: {} };
+    }
+
+    function loadAllTeamsState(): HubState {
+        const merged: HubState = { teamUpdates: {}, tasks: {}, artifacts: {}, contracts: {} };
+        try {
+            if (!existsSync(teamsBaseDir)) return merged;
+            const dirs = readdirSync(teamsBaseDir, { withFileTypes: true })
+                .filter(d => d.isDirectory());
+            for (const dir of dirs) {
+                const ts = loadTeamState(join(teamsBaseDir, dir.name));
+                Object.assign(merged.teamUpdates, ts.teamUpdates);
+                Object.assign(merged.tasks, ts.tasks);
+                Object.assign(merged.artifacts, ts.artifacts);
+                Object.assign(merged.contracts, ts.contracts);
+            }
+        } catch (err) {
+            if (verbose) console.log(`[Hub] Could not scan teams: ${(err as Error).message}`);
+        }
+        return merged;
     }
 
     function saveState(): void {
@@ -82,8 +114,8 @@ export function startHub(options: HubOptions): WebSocketServer {
         }
     }
 
-    // Load persisted state
-    const saved = loadState();
+    // Load persisted state — merge all teams so web platform can see everything
+    const saved = loadAllTeamsState();
 
     // --- Stores ---
     const teamUpdates: Map<string, TeamUpdate[]> = new Map(Object.entries(saved.teamUpdates));
@@ -367,6 +399,7 @@ export function startHub(options: HubOptions): WebSocketServer {
 
                     const task: TaskState = {
                         taskId,
+                        team: creator.team,
                         title: msg.title,
                         description: enrichedDescription,
                         assignee: msg.assignee,
@@ -618,6 +651,7 @@ export function startHub(options: HubOptions): WebSocketServer {
 
                     const meta: ArtifactMeta = {
                         filename: msg.filename,
+                        team: agent.team,
                         type: msg.artifactType,
                         summary: msg.summary,
                         owner: agent.name,
@@ -840,5 +874,14 @@ export function startHub(options: HubOptions): WebSocketServer {
     });
 
     console.log(`[AgentHub] Hub server running on ws://localhost:${port}`);
-    return wss;
+    return {
+        wss,
+        registry,
+        stores: {
+            tasks: taskStore,
+            artifacts: artifactStore,
+            contracts: contractStore,
+            teamUpdates,
+        },
+    };
 }

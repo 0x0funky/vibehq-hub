@@ -43,18 +43,18 @@ Options:
 }
 
 const { port, verbose } = parseArgs();
-const wss = startHub({ port, verbose });
+const hub = startHub({ port, verbose });
 
 // Graceful shutdown
 process.on('SIGINT', () => {
     console.log('\n[AgentHub] Shutting down...');
-    wss.close(() => {
+    hub.wss.close(() => {
         process.exit(0);
     });
 });
 
 process.on('SIGTERM', () => {
-    wss.close(() => {
+    hub.wss.close(() => {
         process.exit(0);
     });
 });

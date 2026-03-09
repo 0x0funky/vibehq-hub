@@ -40,6 +40,15 @@ export interface SpawnerOptions {
     dangerouslySkipPermissions?: boolean;
     additionalDirs?: string[];
     cwd?: string;
+    /** Web mode: skip stdin/stdout/process.exit, use callbacks instead */
+    webMode?: boolean;
+    /** PTY output callback (web mode) */
+    onData?: (data: string) => void;
+    /** PTY exit callback (web mode) */
+    onExit?: (exitCode: number) => void;
+    /** Initial terminal size (web mode) */
+    cols?: number;
+    rows?: number;
 }
 
 export class AgentSpawner {
@@ -348,8 +357,9 @@ export class AgentSpawner {
     private spawnCli(): void {
         const { command, args, systemPrompt } = this.options;
         const resolvedCommand = resolveCommand(command);
-        const cols = process.stdout.columns || 80;
-        const rows = process.stdout.rows || 24;
+        const webMode = this.options.webMode ?? false;
+        const cols = webMode ? (this.options.cols || 80) : (process.stdout.columns || 80);
+        const rows = webMode ? (this.options.rows || 24) : (process.stdout.rows || 24);
         const cmd = command.toLowerCase();
 
         // Build spawn args — append system prompt flag for Claude
@@ -376,36 +386,59 @@ export class AgentSpawner {
             env: process.env as { [key: string]: string },
         });
 
-        process.stdout.on('resize', () => {
-            this.ptyProcess?.resize(
-                process.stdout.columns || 80,
-                process.stdout.rows || 24,
-            );
-        });
+        if (!webMode) {
+            process.stdout.on('resize', () => {
+                this.ptyProcess?.resize(
+                    process.stdout.columns || 80,
+                    process.stdout.rows || 24,
+                );
+            });
 
-        if (process.stdin.isTTY) {
-            process.stdin.setRawMode(true);
+            if (process.stdin.isTTY) {
+                process.stdin.setRawMode(true);
+            }
+            process.stdin.resume();
+
+            // User stdin → PTY (direct passthrough)
+            process.stdin.on('data', (data) => {
+                this.ptyProcess?.write(data.toString());
+            });
         }
-        process.stdin.resume();
 
-        // User stdin → PTY (direct passthrough)
-        process.stdin.on('data', (data) => {
-            this.ptyProcess?.write(data.toString());
-        });
-
-        // PTY output → user stdout (direct passthrough, no parsing)
+        // PTY output → callback or stdout
         this.ptyProcess.onData((data: string) => {
-            process.stdout.write(data);
-            // Layer 3: PTY silence fallback for ALL CLIs
-            // JSONL CLIs use longer timeout (30s) and don't auto-set 'working'
-            // PTY-only CLIs use shorter timeout (10s) and do auto-set 'working'
+            if (webMode && this.options.onData) {
+                this.options.onData(data);
+            } else if (!webMode) {
+                process.stdout.write(data);
+            }
             this.resetPtyIdleTimer();
         });
 
         this.ptyProcess.onExit(({ exitCode }) => {
-            this.cleanup();
-            process.exit(exitCode);
+            if (webMode) {
+                this.cleanup();
+                if (this.options.onExit) this.options.onExit(exitCode);
+            } else {
+                this.cleanup();
+                process.exit(exitCode);
+            }
         });
+    }
+
+    /** Write text input directly to PTY (for web mode external input) */
+    public writeInput(text: string): void {
+        this.ptyProcess?.write(text);
+    }
+
+    /** Resize the PTY (for web mode terminal resize) */
+    public resize(cols: number, rows: number): void {
+        this.ptyProcess?.resize(cols, rows);
+    }
+
+    /** Kill the PTY process */
+    public kill(): void {
+        this.ptyProcess?.kill();
     }
 
     private connectToHub(): Promise<void> {
@@ -462,7 +495,7 @@ export class AgentSpawner {
      * Write text to PTY in chunks, then press Enter.
      * PTY input buffers are limited (~4096 bytes), so long messages must be chunked.
      */
-    private writeToPty(text: string): void {
+    public writeToPty(text: string): void {
         const CHUNK_SIZE = 512;
         const chunks: string[] = [];
 
@@ -935,7 +968,7 @@ export class AgentSpawner {
     private cleanup(): void {
         if (this.ptyIdleTimer) clearTimeout(this.ptyIdleTimer);
         this.ws?.close();
-        if (process.stdin.isTTY) {
+        if (!this.options.webMode && process.stdin.isTTY) {
             process.stdin.setRawMode(false);
         }
     }

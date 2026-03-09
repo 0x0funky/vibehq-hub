@@ -215,6 +215,7 @@ export interface TaskDependency {
 
 export interface TaskState {
     taskId: string;
+    team: string;
     title: string;
     description: string;
     assignee: string;
@@ -291,6 +292,7 @@ export type ArtifactType = 'spec' | 'plan' | 'report' | 'decision' | 'code' | 'o
 
 export interface ArtifactMeta {
     filename: string;
+    team: string;
     type: ArtifactType;
     summary: string;
     owner: string;

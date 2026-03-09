@@ -8,6 +8,7 @@ export default defineConfig({
         'bin/spawn': 'bin/spawn.ts',
         'bin/start': 'bin/start.ts',
         'bin/analyze': 'bin/analyze.ts',
+        'bin/web': 'bin/web.ts',
     },
     format: ['esm'],
     target: 'node18',
@@ -19,7 +20,7 @@ export default defineConfig({
     sourcemap: true,
     clean: true,
     shims: false,
-    external: ['node-pty'],
+    external: ['node-pty', 'express'],
     banner: ({ format }) => {
         // Add shebang for bin entry points
         return { js: '' };
@@ -27,7 +28,7 @@ export default defineConfig({
     onSuccess: async () => {
         // Add shebang to bin files and set executable permission (needed on Mac/Linux)
         const fs = await import('fs');
-        const binFiles = ['dist/bin/hub.js', 'dist/bin/agent.js', 'dist/bin/spawn.js', 'dist/bin/start.js', 'dist/bin/analyze.js'];
+        const binFiles = ['dist/bin/hub.js', 'dist/bin/agent.js', 'dist/bin/spawn.js', 'dist/bin/start.js', 'dist/bin/analyze.js', 'dist/bin/web.js'];
         for (const file of binFiles) {
             try {
                 const content = fs.readFileSync(file, 'utf-8');

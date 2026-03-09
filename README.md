@@ -13,7 +13,7 @@
 
 <p align="center">
   <strong>Multi-Agent AI Collaboration Platform</strong><br/>
-  <em>Orchestrate Claude, Codex & Gemini agents working as a real engineering team.</em>
+  <em>Orchestrate Claude, Codex & Gemini agents working as a real engineering team — from your browser, on any device.</em>
 </p>
 
 <p align="center">
@@ -24,6 +24,7 @@
 </p>
 
 <p align="center">
+  <a href="#-web-platform--mobile-control">Web Platform</a> •
   <a href="#-the-problem">The Problem</a> •
   <a href="#-the-solution">The Solution</a> •
   <a href="#-features">Features</a> •
@@ -31,9 +32,50 @@
   <a href="#-how-it-works">How It Works</a> •
   <a href="#-configuration">Configuration</a> •
   <a href="#-post-run-analytics">Analytics</a> •
-  <a href="#-benchmarks">Benchmarks</a> •
-  <a href="#-demo">Demo</a>
+  <a href="#-benchmarks">Benchmarks</a>
 </p>
+
+---
+
+## 📱 Web Platform — Control Your Agents From Anywhere
+
+VibeHQ includes a **full web dashboard** that lets you manage all your AI agent teams from a browser — desktop or phone. No remote desktop, no SSH, no VPN. Just open a URL and you have full control.
+
+**Start agents from your desk. Monitor them from your couch. Fix issues from your phone.**
+
+### Desktop
+
+https://github.com/user-attachments/assets/0a09268a-b7c5-4482-bcdf-eb4f9d4b574a
+
+### Mobile — Full Control From Your Phone
+
+https://github.com/user-attachments/assets/7e552b93-b4c2-4c07-9a20-34d9dccb0b8e
+
+### What You Can Do
+
+- **Create & manage teams** — add agents, assign roles, set working directories
+- **Start/stop agents** — one click to launch or kill any agent or entire team
+- **Live terminals** — real-time xterm.js terminals for every agent, right in the browser
+- **Send instructions** — type commands directly into any agent's terminal
+- **Monitor tasks** — see active tasks, artifacts, and team updates per team
+- **Mobile-optimized** — responsive UI with touch-friendly terminal controls (arrow keys, Ctrl+C, Tab, etc.)
+- **LAN access** — server binds to `0.0.0.0`, any device on your network can connect
+- **Optional auth** — set `VIBEHQ_AUTH=user:pass` to enable basic authentication
+
+### Quick Start
+
+```bash
+# Start the web platform
+node dist/bin/web.js
+
+# With authentication (recommended for LAN access)
+VIBEHQ_AUTH=admin:secret node dist/bin/web.js
+
+# Custom ports
+node dist/bin/web.js --port 8080 --hub-port 4001
+```
+
+The server prints your LAN IP on startup — open that URL on your phone and you're in.
 
 ---
 
@@ -151,10 +193,19 @@ Agents don't communicate through prompt injection hacks. They use **20 purpose-b
 
 ### 🎯 Core Platform
 - **Multi-CLI Support** — Claude Code, Codex CLI, Gemini CLI running side by side
-- **Real-time Dashboard** — Live agent status, team updates, message routing visualization
+- **Web Dashboard** — Full browser-based UI with live terminals, team management, and mobile support
+- **TUI Mode** — Terminal-based interactive launcher for desktop power users
 - **MCP Integration** — 20 purpose-built tools injected into every agent via Model Context Protocol
-- **Per-Agent Terminals** — Each agent gets its own terminal window, fully interactive
+- **Per-Agent Terminals** — Each agent gets its own terminal, fully interactive (browser or native)
 - **Hot Respawn** — Reconnect any crashed agent without restarting the team
+
+### 📱 Web Platform
+- **Browser-based control** — Create teams, start/stop agents, view terminals from any browser
+- **Mobile-optimized** — Responsive design with touch toolbar (arrow keys, Ctrl+C, Tab, Esc)
+- **LAN access** — Manage agents from your phone on the same WiFi network
+- **Real-time terminals** — xterm.js with full scrollback, resize, and input support
+- **Live monitoring** — Task board, team updates feed, agent status with auto-refresh
+- **Optional authentication** — Basic auth via `VIBEHQ_AUTH` environment variable
 
 ### 🔄 V2 Collaboration Framework
 - **Task Lifecycle** — `create → accept → in_progress → blocked → done` with artifact requirements
@@ -200,12 +251,28 @@ git clone https://github.com/0x0funky/vibehq-hub.git
 cd vibehq-hub
 npm install
 npm run build
+npm run build:web
 npm link
 ```
 
-This globally registers `vibehq`, `vibehq-spawn`, `vibehq-hub`, and `vibehq-analyze` commands.
+This globally registers `vibehq`, `vibehq-spawn`, `vibehq-hub`, `vibehq-web`, and `vibehq-analyze` commands.
 
-### Launch (Windows — TUI Mode)
+### Launch — Web Platform (Recommended)
+
+```bash
+# Start web dashboard — accessible from desktop & mobile
+vibehq-web
+
+# With authentication for LAN access
+VIBEHQ_AUTH=admin:secret vibehq-web
+
+# Custom ports
+vibehq-web --port 8080 --hub-port 4001
+```
+
+Open the printed URL in your browser. On mobile, use the LAN IP shown in the console.
+
+### Launch — TUI Mode (Windows Terminal)
 
 ```bash
 vibehq
@@ -213,7 +280,7 @@ vibehq
 
 Select a team → Start → agents spawn in new Windows Terminal tabs.
 
-### Launch (Mac / Linux — Manual Mode)
+### Launch — Manual Mode (Mac / Linux)
 
 The TUI auto-spawn currently targets Windows Terminal (`wt`), iTerm2, and standard Linux terminals. If the TUI doesn't spawn terminals correctly on your system, you can start agents manually:
 
@@ -259,6 +326,7 @@ vibehq-spawn --name "Casey" --role "QA Engineer" \
 
 | Feature | Windows | Mac | Linux |
 |---------|---------|-----|-------|
+| Web Platform (browser + mobile) | ✅ Tested | ✅ Should work | ✅ Should work |
 | TUI (interactive team launcher) | ✅ Tested | ✅ Tested (Terminal.app/iTerm2) | ⚠️ Untested (gnome-terminal/xterm/tmux) |
 | Hub server | ✅ Tested | ✅ Tested | ✅ Should work |
 | Manual spawn (`vibehq-spawn`) | ✅ Tested | ✅ Tested | ✅ Should work |
@@ -308,6 +376,14 @@ vibehq-spawn --name "Casey" --role "QA Engineer" \
     │ └────┘ │ │ └────┘ │ │ └────┘ │ │ └────┘ │
     └────────┘ └────────┘ └────────┘ └────────┘
      frontend    backend    root        qa
+         ▲          ▲          ▲          ▲
+         └──────────┴─────┬────┴──────────┘
+                          │
+                ┌─────────▼──────────┐
+                │   Web Dashboard    │
+                │  (Express + React) │
+                │  Desktop & Mobile  │
+                └────────────────────┘
 ```
 
 ### Data Flow
@@ -319,6 +395,7 @@ vibehq-spawn --name "Casey" --role "QA Engineer" \
 5. Hub **flushes queue** → Jordan receives the task
 6. Jordan calls `accept_task` → writes code → calls `complete_task` with artifact
 7. Hub **persists** everything to disk, **broadcasts** status to team
+8. **Web dashboard** shows all of this in real-time — from any device
 
 ---
 
@@ -471,52 +548,6 @@ All team collaboration data is persisted to disk under your home directory:
 
 ---
 
-## 🎬 Demo
-
-### What We Built: MedVault — AI Hospital System
-
-7 AI agents collaborating to build a full-stack hospital management platform from a single PM prompt:
-
-| Agent | Role | CLI | What They Built |
-|-------|------|-----|-----------------|
-| Alex | Project Manager | Codex | Coordination, task tracking, spec reviews |
-| Sam | Product Designer | Claude | UI/UX design specs, color system, component layouts |
-| Jordan | Frontend Lead | Claude | Dashboard, Patient Records, Login pages |
-| Taylor | Imaging Specialist | Claude | Medical imaging viewer (zoom, pan, brightness) |
-| Riley | Backend Engineer | Claude | REST API, SQLite DB, JWT auth |
-| Morgan | AI Engineer | Claude | AI diagnosis endpoint with confidence scoring |
-| Casey | QA Engineer | Claude | Integration testing, bug reports |
-
-### Demo Highlights
-
-- **Real-time agent conversation** — agents asking each other questions and replying through MCP tools
-- **Task creation & acceptance** — PM creates tasks, engineers accept/reject with notes
-- **Contract negotiation** — Backend publishes API spec → Frontend and Designer review and sign
-- **Contract approval broadcast** — `"✅ CONTRACT APPROVED"` sent to entire team simultaneously
-- **Status transitions** — Dashboard showing agents moving between `idle` ↔ `working` in real-time
-- **Queue in action** — Messages waiting while an agent is busy, then flushing when idle
-- **Bug reporting flow** — QA finds issue → reports to engineer → engineer fixes → re-tests
-- **Artifact publishing** — Design specs, API docs, test reports shared across the team
-- **Final product** — Login → Dashboard → Patient records → X-Ray viewer → AI diagnosis
-
-### Workflow in Action
-
-```
-PM creates task ──► Engineer accepts ──► Writes spec
-                                              │
-                                    publish_contract
-                                              │
-                              Team signs off ◄─┘
-                                    │
-                              Code begins
-                                    │
-                          complete_task + artifact
-                                    │
-                              QA verification
-```
-
----
-
 ## 📊 Post-Run Analytics
 
 After a team session ends, analyze the JSONL logs to understand what went well and what didn't.
@@ -609,6 +640,7 @@ vibehq              # Interactive TUI (Windows recommended)
 vibehq start        # Start a team directly from config
 vibehq init         # Create a new vibehq.config.json
 vibehq dashboard    # Dashboard only (connect to existing hub)
+vibehq-web          # Web platform (browser + mobile)
 ```
 
 ### Post-Run Analytics
@@ -653,6 +685,7 @@ agent-hub/
 │   ├── spawn.ts          # Single agent spawner CLI
 │   ├── hub.ts            # Standalone hub server
 │   ├── agent.ts          # MCP agent server
+│   ├── web.ts            # Web platform entry point
 │   └── analyze.ts        # Post-run analytics CLI
 ├── src/
 │   ├── hub/
@@ -661,6 +694,11 @@ agent-hub/
 │   │   └── relay.ts      # Message relay engine
 │   ├── spawner/
 │   │   └── spawner.ts    # PTY manager + JSONL watcher + idle detection
+│   ├── web/
+│   │   ├── server.ts     # Express HTTP + WebSocket server
+│   │   ├── pty-manager.ts # In-process PTY management for web mode
+│   │   ├── api/          # REST API (teams, agents, lifecycle, state, filesystem)
+│   │   └── ws/           # WebSocket handlers (terminal, hub events)
 │   ├── mcp/
 │   │   ├── hub-client.ts # MCP ↔ Hub WebSocket bridge
 │   │   └── tools/        # 20 MCP tool implementations
@@ -677,6 +715,11 @@ agent-hub/
 │   └── tui/
 │       ├── role-presets.ts    # Built-in role system prompts (V2)
 │       └── screens/           # Dashboard, welcome, settings, create-team
+├── web/                   # React frontend (Vite + xterm.js)
+│   └── src/
+│       ├── App.tsx        # Router + responsive layout
+│       ├── pages/         # Home, TeamDashboard
+│       └── components/    # Sidebar, Terminal, AgentCard, TaskBoard, etc.
 ├── vibehq.config.json    # Team configuration
 └── images/               # Screenshots
 ```
@@ -688,7 +731,7 @@ agent-hub/
 PRs welcome. The architecture is modular:
 - **New MCP tool?** Add to `src/mcp/tools/` + register in `hub-client.ts`
 - **New CLI support?** Add detection in `spawner.ts` + MCP config in `autoConfigureMcp()`
-- **New dashboard widget?** Extend `src/tui/screens/dashboard.ts`
+- **New dashboard widget?** Extend `src/tui/screens/dashboard.ts` or `web/src/components/`
 
 ## 📄 License
 

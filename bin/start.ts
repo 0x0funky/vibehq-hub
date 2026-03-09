@@ -7,7 +7,7 @@ import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { exec } from 'child_process';
 import { createServer } from 'net';
 import { tmpdir } from 'os';
-import type { WebSocketServer } from 'ws';
+import type { HubContext } from '../src/hub/server.js';
 import { c, screen, cursor } from '../src/tui/renderer.js';
 import { welcomeScreen } from '../src/tui/screens/welcome.js';
 import { createTeamScreen } from '../src/tui/screens/create-team.js';
@@ -24,14 +24,14 @@ import {
 } from '../src/analyzer/index.js';
 
 // --- Running hub tracker ---
-let runningHub: { wss: WebSocketServer; port: number } | null = null;
+let runningHub: { hub: HubContext; port: number } | null = null;
 // Track spawned agent names for killing
 let spawnedAgentNames: string[] = [];
 
 async function stopHub(): Promise<void> {
     if (!runningHub) return;
     await new Promise<void>((resolve) => {
-        runningHub!.wss.close(() => resolve());
+        runningHub!.hub.wss.close(() => resolve());
         setTimeout(resolve, 1000);
     });
     runningHub = null;
@@ -334,8 +334,8 @@ async function startTeam(configPath: string): Promise<void> {
 
     // Start Hub on the found port
     console.log(`  ${c.green}✓${c.reset} Hub started on port ${c.bold}${actualPort}${c.reset}`);
-    const wss = startHub({ port: actualPort, verbose: false, team: team.name });
-    runningHub = { wss, port: actualPort };
+    const hub = startHub({ port: actualPort, verbose: false, team: team.name });
+    runningHub = { hub, port: actualPort };
 
     // Spawn agents (pass actual hub port they should connect to)
     const teamWithActualPort = { ...team, hub: { port: actualPort } };
