@@ -159,6 +159,44 @@ export function registerCompleteTask(server: McpServer, hub: HubClient): void {
     );
 }
 
+export function registerReassignTask(server: McpServer, hub: HubClient): void {
+    server.tool(
+        'reassign_task',
+        'Reassign a task to a different teammate. Use when the current assignee is unresponsive, overloaded, or unable to complete the task. The new assignee will receive the full task description.',
+        {
+            task_id: z.string().describe('ID of the task to reassign'),
+            new_assignee: z.string().describe('Name of the teammate to reassign to'),
+            reason: z.string().optional().describe('Reason for reassignment'),
+        },
+        async (args) => {
+            try {
+                hub.send({
+                    type: 'task:reassign',
+                    taskId: args.task_id,
+                    newAssignee: args.new_assignee,
+                    reason: args.reason,
+                });
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: JSON.stringify({
+                            status: 'reassigned',
+                            taskId: args.task_id,
+                            newAssignee: args.new_assignee,
+                            reason: args.reason || 'manual reassignment',
+                        }, null, 2),
+                    }],
+                };
+            } catch (err) {
+                return {
+                    content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
+                    isError: true,
+                };
+            }
+        },
+    );
+}
+
 export function registerListTasks(server: McpServer, hub: HubClient): void {
     server.tool(
         'list_tasks',

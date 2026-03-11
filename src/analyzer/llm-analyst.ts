@@ -1,17 +1,75 @@
-import type { NormalizedEvent, RunMetrics, DetectedFlags } from './types.js';
+import type { NormalizedEvent, RunMetrics, DetectedFlags, FixAction } from './types.js';
 import { loadConfig } from './config.js';
 
 const ANALYST_SYSTEM_PROMPT = `You are VibHQ's post-run analyst. You receive structured metrics and detected flags from a multi-agent team session.
 
 Output a Run Report Card in JSON format with the following sections.
 Be specific — cite agent names, task IDs, and exact numbers.
-Do not give generic advice. Every suggestion must reference specific data from this run.`;
+Do not give generic advice. Every suggestion must reference specific data from this run.
+
+When generating fix_actions, you MUST reference actual file paths and parameters from the VibeHQ framework.
+Key tunable files and parameters:
+- src/hub/server.ts: HEARTBEAT_TIMEOUT (default 120000ms) — how long before agent marked offline
+- src/hub/server.ts: STARTUP_GRACE_MS (default 180000ms) — agents not checked during first 3 minutes after hub start
+- src/spawner/spawner.ts: PTY_IDLE_TIMEOUT (default 10000ms) — PTY silence before marking idle
+- src/spawner/spawner.ts: JSONL idle fallback (default 30000ms) — fallback idle timeout for JSONL CLIs
+- src/mcp/server.ts: askTimeout (default 120000ms) — timeout for ask_teammate responses
+- src/analyzer/pattern-detector.ts: STUB threshold (<500 bytes) — minimum artifact size
+- src/analyzer/pattern-detector.ts: TASK_TIMEOUT threshold (>900s / 15min) — max task duration
+- src/analyzer/pattern-detector.ts: CONTEXT_BLOAT threshold (>5.0x) — max context growth ratio
+- src/analyzer/pattern-detector.ts: HIGH_COORDINATION_OVERHEAD threshold (>0.30) — max orchestrator token ratio
+- src/analyzer/pattern-detector.ts: EXCESSIVE_MCP_POLLING threshold (>15 calls) — max polling calls
+- vibehq.config.json: team agent configs (systemPrompt, role, cwd, additionalDirs)
+- src/tui/role-presets.ts: role-based system prompt templates
+- src/spawner/spawner.ts: ORCHESTRATOR_ROLES — auto-injects tool usage constraints for PM/coordinator roles
+- src/spawner/spawner.ts: --disallowedTools — for Claude orchestrators, CLI-level enforcement blocks Bash/Write/Edit/Read/NotebookEdit/Glob/Grep/ToolSearch (cannot be bypassed by prompt)
+- src/spawner/spawner.ts: Codex orchestrators get --sandbox read-only (limits shell_command damage but cannot fully block it; Claude is recommended for orchestrator roles)
+- src/analyzer/metrics-extractor.ts: pending_* task deduplication — phantom tasks from Codex create_task MCP logs are auto-removed when real UUID tasks exist
+- src/mcp/tools/artifact.ts: validateContent() — rejects stub files, empty content (0 bytes), and content regressions (>80% size decrease)
+- src/mcp/tools/share-file.ts: content validation — rejects empty content (0 bytes), stub pattern detection, and regression rejection
+- src/analyzer/metrics-extractor.ts: ghost agent filtering — agents with empty agentId are excluded from metrics
+- src/hub/server.ts: auto-reassign — heartbeat handler reassigns tasks from unresponsive agents to idle workers
+- src/mcp/tools/task-lifecycle.ts: reassign_task — manual task reassignment MCP tool
+- src/hub/server.ts: proactive notifications — hub notifies creator on task accept/reject, in_progress, blocked, and completion (reduces polling need)`;
+
+interface FrameworkContext {
+  heartbeat_timeout_ms: number;
+  pty_idle_timeout_ms: number;
+  jsonl_idle_fallback_ms: number;
+  ask_timeout_ms: number;
+  stub_threshold_bytes: number;
+  task_timeout_sec: number;
+  context_bloat_ratio: number;
+  coordination_overhead_ratio: number;
+  excessive_polling_threshold: number;
+  team_config?: Record<string, unknown>;
+}
+
+export function collectFrameworkContext(teamConfig?: Record<string, unknown>): FrameworkContext {
+  return {
+    heartbeat_timeout_ms: 120_000,
+    pty_idle_timeout_ms: 10_000,
+    jsonl_idle_fallback_ms: 30_000,
+    ask_timeout_ms: 120_000,
+    stub_threshold_bytes: 500,
+    task_timeout_sec: 900,
+    context_bloat_ratio: 5.0,
+    coordination_overhead_ratio: 0.30,
+    excessive_polling_threshold: 15,
+    team_config: teamConfig,
+  };
+}
 
 function buildUserPrompt(
   metrics: RunMetrics,
   flags: DetectedFlags,
   sampledMessages: SampledMessage[],
+  frameworkContext?: FrameworkContext,
 ): string {
+  const ctxSection = frameworkContext
+    ? `\n## Current Framework Configuration\n${JSON.stringify(frameworkContext, null, 2)}\n`
+    : '';
+
   return `## Run Metrics
 ${JSON.stringify(metrics, null, 2)}
 
@@ -20,7 +78,7 @@ ${JSON.stringify(flags, null, 2)}
 
 ## Sampled Messages (${sampledMessages.length} most relevant)
 ${JSON.stringify(sampledMessages, null, 2)}
-
+${ctxSection}
 ## Output Format
 Return ONLY valid JSON (no markdown fences, no explanation before/after):
 {
@@ -62,6 +120,19 @@ Return ONLY valid JSON (no markdown fences, no explanation before/after):
       "target": "framework|orchestrator_prompt|task_contract|agent_prompt",
       "suggestion": "string",
       "expected_impact": "string"
+    }
+  ],
+
+  "fix_actions": [
+    {
+      "priority": "P0|P1|P2",
+      "target_file": "string (relative path, e.g. src/hub/server.ts or vibehq.config.json)",
+      "target_param": "string (variable/config key name, e.g. HEARTBEAT_TIMEOUT)",
+      "action": "modify|add|remove",
+      "current_value": "string (current value if known)",
+      "suggested_value": "string (what to change it to)",
+      "rationale": "string (why, citing specific data from this run)",
+      "detection_rule": "string (which detection rule triggered this, e.g. TASK_TIMEOUT)"
     }
   ]
 }`;
@@ -154,6 +225,7 @@ export async function runLlmAnalysis(
   flags: DetectedFlags,
   events: NormalizedEvent[],
   cliOptions?: LlmAnalystOptions,
+  teamConfig?: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   // Load config with priority: CLI > env > project config > global config > defaults
   const config = loadConfig(cliOptions);
@@ -170,7 +242,8 @@ export async function runLlmAnalysis(
   }
 
   const sampled = sampleMessages(events);
-  const userPrompt = buildUserPrompt(metrics, flags, sampled);
+  const frameworkContext = collectFrameworkContext(teamConfig);
+  const userPrompt = buildUserPrompt(metrics, flags, sampled, frameworkContext);
 
   const response = provider === 'openai'
     ? await callOpenAI(apiKey, model, baseUrl || 'https://api.openai.com', userPrompt)
@@ -189,7 +262,7 @@ async function callAnthropic(apiKey: string, model: string, baseUrl: string, use
     },
     body: JSON.stringify({
       model,
-      max_tokens: 4096,
+      max_tokens: 8192,
       system: ANALYST_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],
     }),
@@ -211,7 +284,7 @@ async function callOpenAI(apiKey: string, model: string, baseUrl: string, userPr
     },
     body: JSON.stringify({
       model,
-      max_tokens: 4096,
+      max_completion_tokens: 8192,
       messages: [
         { role: 'system', content: ANALYST_SYSTEM_PROMPT },
         { role: 'user', content: userPrompt },
@@ -289,6 +362,22 @@ export function formatReportCard(card: Record<string, unknown>): string {
       const header = `  [${s.priority}] ${s.target}`;
       lines.push(`║ ${header}${' '.repeat(Math.max(0, w - header.length))}║`);
       for (const chunk of wrapText(`    ${s.suggestion}`, w - 2)) {
+        lines.push(`║ ${chunk}${' '.repeat(Math.max(0, w - chunk.length))}║`);
+      }
+    }
+  }
+
+  // Fix actions
+  const fixActions = card.fix_actions as FixAction[] | undefined;
+  if (fixActions && Array.isArray(fixActions) && fixActions.length > 0) {
+    lines.push(`╠${border}╣`);
+    lines.push(`║ ${'Fix Actions (machine-actionable)' + ' '.repeat(w - 32)}║`);
+    for (const f of fixActions) {
+      const header = `  [${f.priority}] ${f.target_file}${f.target_param ? ':' + f.target_param : ''}`;
+      lines.push(`║ ${header}${' '.repeat(Math.max(0, w - header.length))}║`);
+      const actionLine = `    ${f.action}: ${f.current_value || '?'} → ${f.suggested_value || '?'}`;
+      lines.push(`║ ${actionLine}${' '.repeat(Math.max(0, w - actionLine.length))}║`);
+      for (const chunk of wrapText(`    ${f.rationale}`, w - 2)) {
         lines.push(`║ ${chunk}${' '.repeat(Math.max(0, w - chunk.length))}║`);
       }
     }

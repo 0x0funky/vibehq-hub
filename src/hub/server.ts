@@ -25,6 +25,7 @@ import type {
     ContractStatusBroadcast,
     ContractCheckResponseMessage,
     TaskPriority,
+    TaskReassignMessage,
 } from '../shared/types.js';
 
 export interface HubOptions {
@@ -182,7 +183,9 @@ export function startHub(options: HubOptions): HubContext {
 
     // --- Heartbeat / Liveness Monitor ---
     const HEARTBEAT_INTERVAL = 30_000;   // Check every 30 seconds
-    const HEARTBEAT_TIMEOUT = 90_000;    // 90 seconds without activity = offline
+    const HEARTBEAT_TIMEOUT = 120_000;   // 120 seconds without activity = offline (agents need time for startup + long spec writes)
+    const STARTUP_GRACE_MS = 180_000;    // 3 min grace period after hub start — agents are booting
+    const hubStartTime = Date.now();
     const offlineNotified = new Set<string>(); // Track already-notified agents
 
     const heartbeatTimer = setInterval(() => {
@@ -195,7 +198,9 @@ export function startHub(options: HubOptions): HubContext {
             const lastSeen = connected.lastActivity || 0;
             const elapsed = Date.now() - lastSeen;
 
-            if (lastSeen > 0 && elapsed > HEARTBEAT_TIMEOUT && !offlineNotified.has(agent.name)) {
+            // Skip unresponsive checks during startup grace period
+            const inStartupGrace = (Date.now() - hubStartTime) < STARTUP_GRACE_MS;
+            if (!inStartupGrace && lastSeen > 0 && elapsed > HEARTBEAT_TIMEOUT && !offlineNotified.has(agent.name)) {
                 offlineNotified.add(agent.name);
 
                 // Notify orchestrator (PM role agents)
@@ -209,16 +214,60 @@ export function startHub(options: HubOptions): HubContext {
                     });
                 }
 
-                // Mark active tasks as blocked
-                for (const [, task] of taskStore) {
-                    if (task.assignee === agent.name && task.status !== 'done' && task.status !== 'rejected') {
+                // Auto-reassign: find tasks assigned to dead agent and reassign to idle workers
+                const deadAgentTasks = Array.from(taskStore.values()).filter(
+                    t => t.assignee === agent.name && t.status !== 'done' && t.status !== 'rejected'
+                );
+
+                // Find available workers (idle, not the dead agent, same team)
+                const availableWorkers = allAgents.filter(a =>
+                    a.name !== agent.name &&
+                    a.status === 'idle' &&
+                    !['Project Manager', 'Chief Strategist'].some(r => a.role.includes(r))
+                );
+
+                for (const task of deadAgentTasks) {
+                    if (availableWorkers.length > 0) {
+                        // Pick the first idle worker
+                        const newAssignee = availableWorkers[0];
+                        const oldAssignee = task.assignee;
+                        task.assignee = newAssignee.name;
+                        task.status = 'created';
+                        task.statusNote = `auto-reassigned from ${oldAssignee} (unresponsive)`;
+                        task.updatedAt = new Date().toISOString();
+
+                        // Send task to new assignee
+                        queueOrDeliver(newAssignee.name, connected.team, {
+                            type: 'relay:task',
+                            requestId: task.taskId,
+                            fromAgent: task.creator,
+                            task: `[TASK ${task.taskId}] ${task.title} — REASSIGNED (${oldAssignee} unresponsive)\n\n` +
+                                `Priority: ${task.priority}\n\n${task.description}\n\n` +
+                                `Please call accept_task(task_id="${task.taskId}", accepted=true) to accept.`,
+                            priority: task.priority,
+                        });
+
+                        // Notify old assignee to stop working
+                        queueOrDeliver(oldAssignee, connected.team, {
+                            type: 'relay:reply:delivered',
+                            fromAgent: 'Hub',
+                            message: `[TASK ${task.taskId}] ⛔ REASSIGNED — You were unresponsive, so "${task.title}" has been reassigned to ${newAssignee.name}. STOP working on this task immediately.`,
+                        });
+
+                        registry.broadcastToTeam(connected.team, {
+                            type: 'task:status:broadcast', task,
+                        } satisfies TaskStatusBroadcast);
+
+                        if (verbose) console.log(`[Hub] Task ${task.taskId}: auto-reassigned from ${oldAssignee} → ${newAssignee.name}`);
+                    } else {
+                        // No idle workers — mark as blocked
                         task.status = 'blocked';
-                        task.statusNote = 'agent_unresponsive';
+                        task.statusNote = 'agent_unresponsive — no idle workers for reassignment';
                         task.updatedAt = new Date().toISOString();
                     }
                 }
 
-                if (verbose) console.log(`[Hub] Agent ${agent.name}: UNRESPONSIVE (${Math.round(elapsed / 1000)}s)`);
+                if (verbose) console.log(`[Hub] Agent ${agent.name}: UNRESPONSIVE (${Math.round(elapsed / 1000)}s), ${deadAgentTasks.length} tasks affected`);
                 saveState();
             } else if (lastSeen > 0 && elapsed <= HEARTBEAT_TIMEOUT && offlineNotified.has(agent.name)) {
                 // Agent came back
@@ -518,12 +567,18 @@ export function startHub(options: HubOptions): HubContext {
                         type: 'task:status:broadcast', task,
                     } satisfies TaskStatusBroadcast);
 
-                    // If blocked, notify creator
+                    // Notify creator on status changes (reduces polling need)
                     if (msg.status === 'blocked') {
                         queueOrDeliver(task.creator, agent.team, {
                             type: 'relay:reply:delivered',
                             fromAgent: agent.name,
                             message: `[TASK ${task.taskId}] ⚠️ BLOCKED: "${task.title}"\nBlocker: ${msg.note || 'No details provided'}`,
+                        });
+                    } else if (msg.status === 'in_progress') {
+                        queueOrDeliver(task.creator, agent.team, {
+                            type: 'relay:reply:delivered',
+                            fromAgent: agent.name,
+                            message: `[TASK ${task.taskId}] 🔄 IN PROGRESS: "${task.title}"${msg.note ? `\nNote: ${msg.note}` : ''}`,
                         });
                     }
 
@@ -604,6 +659,60 @@ export function startHub(options: HubOptions): HubContext {
                     }
 
                     if (verbose) console.log(`[Hub] Task ${msg.taskId}: completed by ${agent.name}, artifact: ${msg.artifact}`);
+                    saveState();
+                    break;
+                }
+
+                case 'task:reassign': {
+                    const agent = registry.getAgentByWs(ws);
+                    if (!agent) break;
+
+                    const task = taskStore.get(msg.taskId);
+                    if (!task) {
+                        ws.send(JSON.stringify({
+                            type: 'relay:reply:delivered',
+                            fromAgent: 'Hub',
+                            message: `Error: Task "${msg.taskId}" not found.`,
+                        }));
+                        break;
+                    }
+
+                    const oldAssignee = task.assignee;
+                    task.assignee = msg.newAssignee;
+                    task.status = 'created';
+                    task.statusNote = msg.reason || `reassigned from ${oldAssignee} by ${agent.name}`;
+                    task.updatedAt = new Date().toISOString();
+
+                    // Send task to new assignee
+                    queueOrDeliver(msg.newAssignee, agent.team, {
+                        type: 'relay:task',
+                        requestId: task.taskId,
+                        fromAgent: task.creator,
+                        task: `[TASK ${task.taskId}] ${task.title} — REASSIGNED from ${oldAssignee}\n\n` +
+                            `Priority: ${task.priority}\n\n${task.description}\n\n` +
+                            `Please call accept_task(task_id="${task.taskId}", accepted=true) to accept.`,
+                        priority: task.priority,
+                    });
+
+                    // Notify old assignee
+                    queueOrDeliver(oldAssignee, agent.team, {
+                        type: 'relay:reply:delivered',
+                        fromAgent: 'Hub',
+                        message: `[TASK ${task.taskId}] ↗️ Reassigned to ${msg.newAssignee}. You no longer need to work on "${task.title}".`,
+                    });
+
+                    registry.broadcastToTeam(agent.team, {
+                        type: 'task:status:broadcast', task,
+                    } satisfies TaskStatusBroadcast);
+
+                    // Notify requester
+                    ws.send(JSON.stringify({
+                        type: 'relay:reply:delivered',
+                        fromAgent: 'Hub',
+                        message: `[TASK ${task.taskId}] Reassigned: ${oldAssignee} → ${msg.newAssignee}`,
+                    }));
+
+                    if (verbose) console.log(`[Hub] Task ${msg.taskId}: reassigned ${oldAssignee} → ${msg.newAssignee} by ${agent.name}`);
                     saveState();
                     break;
                 }

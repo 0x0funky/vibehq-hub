@@ -124,6 +124,9 @@ function parseArgs(): { name: string; role: string; hub: string; team: string; t
 
 const { name, role, hub, team, timeout, systemPrompt, skipPermissions, additionalDirs, cwd, command, commandArgs } = parseArgs();
 
+console.error(`[vibehq-spawn] name=${name}, skipPermissions=${skipPermissions}, command=${command}`);
+console.error(`[vibehq-spawn] raw args: ${process.argv.slice(2).join(' ')}`);
+
 const spawner = new AgentSpawner({
     name,
     role,

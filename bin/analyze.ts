@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { existsSync, statSync, readdirSync } from 'fs';
+import { existsSync, statSync, readdirSync, readFileSync } from 'fs';
 import { resolve, join } from 'path';
 import {
   parseLogDirectory, parseLogFile, extractMetrics, detectPatterns, formatReport,
   saveRun, loadHistory, loadRun, listRunIds, compareRuns,
   formatHistory, formatComparison, saveReportCard,
   runLlmAnalysis, shouldTriggerLlm, formatReportCard,
+  resolveTeamLogs, filterSessionWindow,
 } from '../src/analyzer/index.js';
 import { loadConfig, saveGlobalConfig, getConfigStatus } from '../src/analyzer/config.js';
 
@@ -31,7 +32,8 @@ Options:
   --json            Output raw JSON
   --save            Save to ~/.vibehq/analytics/
   --run-id <id>     Set custom run ID
-  --with-llm        Run LLM analysis
+  --with-llm        Run LLM analysis (includes fix_actions for auto-optimization)
+  --team <name>     Team name (loads config for LLM context)
   --api-key <key>   API key (overrides config)
   --model <model>   LLM model (overrides config)
   --provider <p>    Provider: anthropic or openai (overrides config)
@@ -175,15 +177,58 @@ if (command === 'compare') {
   process.exit(0);
 }
 
-// ─── analyze <path> (default command) ───
-const inputPath = resolve(args[0]);
-if (!existsSync(inputPath)) {
-  console.error(`Error: path not found: ${inputPath}`);
-  process.exit(1);
-}
+// ─── analyze <path> or --team <name> ───
+let events: ReturnType<typeof parseLogFile> = [];
+let isTeamMode = false;
+let resolvedLogPaths: string[] = [];
 
-const isDir = statSync(inputPath).isDirectory();
-const events = isDir ? parseLogDirectory(inputPath) : parseLogFile(inputPath);
+// Check if first arg is a flag (not a path)
+const firstArgIsFlag = !command || command.startsWith('-');
+const teamNameArg = getArg('--team');
+
+if (firstArgIsFlag && teamNameArg) {
+  // --team mode: auto-resolve logs from team config
+  isTeamMode = true;
+  const configPath = resolve('vibehq.config.json');
+  if (!existsSync(configPath)) {
+    console.error('Error: vibehq.config.json not found in current directory');
+    process.exit(1);
+  }
+  const cfg = JSON.parse(readFileSync(configPath, 'utf-8'));
+  const team = (cfg.teams || []).find((t: any) => t.name === teamNameArg);
+  if (!team) {
+    console.error(`Error: team "${teamNameArg}" not found in vibehq.config.json`);
+    process.exit(1);
+  }
+  const agents = (team.agents || []).map((a: any) => ({
+    name: a.name,
+    cli: a.cli || 'claude',
+    cwd: a.cwd || process.cwd(),
+  }));
+  const resolved = filterSessionWindow(resolveTeamLogs(agents, teamNameArg));
+  if (resolved.length === 0) {
+    console.error(`Error: no log files found for team "${teamNameArg}"`);
+    console.error('Make sure the team has been run at least once.');
+    process.exit(1);
+  }
+  console.error(`Found ${resolved.length} log(s) for team "${teamNameArg}":`);
+  for (const r of resolved) {
+    console.error(`  ${r.agent} (${r.cli}) → ${r.path} [${r.source}]`);
+  }
+  for (const r of resolved) {
+    resolvedLogPaths.push(r.path);
+    events.push(...parseLogFile(r.path));
+  }
+} else {
+  // Path mode: analyze a specific directory or file
+  const inputPath = resolve(args[0]);
+  if (!existsSync(inputPath)) {
+    console.error(`Error: path not found: ${inputPath}`);
+    process.exit(1);
+  }
+  const isDir = statSync(inputPath).isDirectory();
+  events = isDir ? parseLogDirectory(inputPath) : parseLogFile(inputPath);
+}
 
 if (events.length === 0) {
   console.error('Error: no events found in log(s)');
@@ -204,9 +249,36 @@ if (withLlm) {
   const apiKey = getArg('--api-key');
   const model = getArg('--model');
   const provider = getArg('--provider') as 'anthropic' | 'openai' | undefined;
+  const teamName = getArg('--team');
+
+  // Load team config for LLM context
+  let teamConfig: Record<string, unknown> | undefined;
+  if (teamName) {
+    try {
+      const configPath = resolve('vibehq.config.json');
+      if (existsSync(configPath)) {
+        const cfg = JSON.parse(readFileSync(configPath, 'utf-8'));
+        const team = (cfg.teams || []).find((t: any) => t.name === teamName);
+        if (team) {
+          // Strip sensitive fields, keep structure
+          teamConfig = {
+            name: team.name,
+            agents: (team.agents || []).map((a: any) => ({
+              name: a.name,
+              role: a.role,
+              cli: a.cli,
+              hasSystemPrompt: !!a.systemPrompt,
+              systemPromptLength: a.systemPrompt?.length || 0,
+            })),
+          };
+        }
+      }
+    } catch { /* non-critical */ }
+  }
+
   try {
-    console.error('Running LLM analysis...');
-    reportCard = await runLlmAnalysis(metrics, flags, events, { apiKey, model, provider });
+    console.error('Running LLM analysis (with fix_actions)...');
+    reportCard = await runLlmAnalysis(metrics, flags, events, { apiKey, model, provider }, teamConfig);
   } catch (e) {
     console.error(`LLM analysis failed: ${(e as Error).message}`);
   }
@@ -227,9 +299,16 @@ if (hasFlag('--json')) {
 
 // Stage 4: Save to history
 if (hasFlag('--save')) {
-  const rawLogPaths = isDir
-    ? readdirSync(inputPath).filter(f => f.endsWith('.jsonl')).map(f => join(inputPath, f))
-    : [inputPath];
+  let rawLogPaths: string[];
+  if (isTeamMode) {
+    rawLogPaths = resolvedLogPaths;
+  } else {
+    const inputPath = resolve(args[0]);
+    const isDir = statSync(inputPath).isDirectory();
+    rawLogPaths = isDir
+      ? readdirSync(inputPath).filter(f => f.endsWith('.jsonl')).map(f => join(inputPath, f))
+      : [inputPath];
+  }
   const runDir = saveRun(metrics, flags, rawLogPaths);
   if (reportCard) {
     saveReportCard(metrics.runId, reportCard);

@@ -286,6 +286,20 @@ export interface TaskListResponseMessage {
     tasks: TaskState[];
 }
 
+export interface TaskReassignMessage {
+    type: 'task:reassign';
+    taskId: string;
+    newAssignee: string;
+    reason?: string;
+}
+
+export interface ArtifactRejectedMessage {
+    type: 'artifact:rejected';
+    filename: string;
+    reason: string;
+    agent: string;
+}
+
 // --- WS Messages: Artifact System ---
 
 export type ArtifactType = 'spec' | 'plan' | 'report' | 'decision' | 'code' | 'other';
@@ -415,4 +429,6 @@ export type HubMessage =
     | ContractSignMessage
     | ContractStatusBroadcast
     | ContractCheckMessage
-    | ContractCheckResponseMessage;
+    | ContractCheckResponseMessage
+    | TaskReassignMessage
+    | ArtifactRejectedMessage;

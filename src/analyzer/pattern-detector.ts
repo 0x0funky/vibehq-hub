@@ -17,7 +17,7 @@ const RULES: DetectionRule[] = [
       const results: Record<string, unknown>[] = [];
       for (const a of m.artifacts) {
         // Case 1: multiple attempts where first was tiny but final is large
-        if (a.publishAttempts > 1 && a.firstAttemptSize < 300 && a.finalSize > 300) {
+        if (a.publishAttempts > 1 && a.firstAttemptSize < 500 && a.finalSize > 500) {
           results.push({
             agent: a.producer,
             artifact: a.filename,
@@ -29,7 +29,7 @@ const RULES: DetectionRule[] = [
         }
         // Case 2: final artifact is still suspiciously small for its file type
         const isContentFile = /\.(html|json|md|csv|js|ts|css)$/i.test(a.filename);
-        if (isContentFile && a.finalSize < 200 && a.finalSize > 0) {
+        if (isContentFile && a.finalSize < 500 && a.finalSize > 0) {
           results.push({
             agent: a.producer,
             artifact: a.filename,
@@ -253,13 +253,13 @@ const RULES: DetectionRule[] = [
   {
     ruleId: 'EXCESSIVE_MCP_POLLING',
     severity: 'low',
-    description: 'Agent called check_status or list_tasks more than 20 times',
+    description: 'Agent called check_status or list_tasks excessively (hub sends proactive notifications — polling should be minimal)',
     detect: (m) => m.agents
       .filter(a => {
         const polling = (a.mcpToolCalls['check_status'] || 0)
           + (a.mcpToolCalls['list_tasks'] || 0)
           + (a.mcpToolCalls['list_teammates'] || 0);
-        return polling > 20;
+        return polling > 15;
       })
       .map(a => ({
         agent: a.agentId,

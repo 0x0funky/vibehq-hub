@@ -17,6 +17,64 @@ function getSharedDir(team: string): string {
     return dir;
 }
 
+// --- Content validation: reject stubs and regressions ---
+
+interface ContentValidation {
+    valid: boolean;
+    reason?: string;
+}
+
+const MIN_SIZE_BY_EXT: Record<string, number> = {
+    html: 500, json: 100, md: 200, csv: 100,
+    js: 200, ts: 200, css: 200,
+};
+
+const STUB_PATTERNS = [
+    /^<html>\s*<body>\s*(TODO|placeholder|coming soon)/i,
+    /^\{\s*"placeholder"\s*:/,
+    /^#\s*(TODO|TBD|placeholder)/i,
+    /see shared|see file|published as|available via|refer to/i,
+];
+
+function validateContent(filename: string, content: string, previousSize?: number): ContentValidation {
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    const minSize = MIN_SIZE_BY_EXT[ext];
+    const size = Buffer.byteLength(content, 'utf-8');
+
+    // Hard block: never allow empty content
+    if (size === 0) {
+        return {
+            valid: false,
+            reason: `Empty content rejected. You must provide actual content for "${filename}". ` +
+                `If the file was already shared via share_file, omit the content field to keep the existing file.`,
+        };
+    }
+
+    // Check minimum size for known file types
+    if (minSize && size < minSize && size > 0) {
+        // Check if content matches stub patterns
+        const isStub = STUB_PATTERNS.some(p => p.test(content.trim()));
+        if (isStub) {
+            return {
+                valid: false,
+                reason: `Content appears to be a stub (${size} bytes, min ${minSize} for .${ext}). ` +
+                    `Please provide the FULL content. If you already used share_file, omit the content field.`,
+            };
+        }
+    }
+
+    // Check for regression (content shrunk >80% from previous version)
+    if (previousSize && previousSize > 500 && size < previousSize * 0.2) {
+        return {
+            valid: false,
+            reason: `Content regression detected: ${size} bytes, down from ${previousSize} bytes (${Math.round((1 - size / previousSize) * 100)}% smaller). ` +
+                `This looks like a truncated or placeholder version. Please publish the complete content.`,
+        };
+    }
+
+    return { valid: true };
+}
+
 export function registerPublishArtifact(server: McpServer, hub: HubClient, team: string): void {
     server.tool(
         'publish_artifact',
@@ -37,18 +95,30 @@ export function registerPublishArtifact(server: McpServer, hub: HubClient, team:
                 if (fileExists) {
                     // File already exists (from share_file or prior publish) — do NOT overwrite
                     // Only register metadata with the Hub
+
+                    // But validate if new content is provided (update case)
+                    if (args.content) {
+                        const previousSize = statSync(filepath).size;
+                        const validation = validateContent(args.filename, args.content, previousSize);
+                        if (!validation.valid) {
+                            return {
+                                content: [{
+                                    type: 'text' as const,
+                                    text: `❌ ${validation.reason}`,
+                                }],
+                                isError: true,
+                            };
+                        }
+                        writeFileSync(filepath, args.content, 'utf-8');
+                    }
                 } else if (args.content) {
-                    // Stub detection: reject pointer/reference content
-                    const STUB_PATTERNS = ['see shared', 'see file', 'published as', 'available via', 'refer to'];
-                    const isStub = args.content.length < 200 &&
-                        STUB_PATTERNS.some(p => args.content!.toLowerCase().includes(p));
-                    if (isStub) {
+                    // New file — validate content quality
+                    const validation = validateContent(args.filename, args.content);
+                    if (!validation.valid) {
                         return {
                             content: [{
                                 type: 'text' as const,
-                                text: `❌ Content appears to be a reference pointer (${args.content.length} bytes), not actual content. ` +
-                                    `If you already called share_file, you can omit the content field — the file is already registered. ` +
-                                    `Otherwise, pass the FULL file content in the 'content' field.`,
+                                text: `❌ ${validation.reason}`,
                             }],
                             isError: true,
                         };

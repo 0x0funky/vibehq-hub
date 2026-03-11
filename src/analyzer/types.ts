@@ -134,6 +134,19 @@ export interface DetectedFlags {
   summary: Record<Severity, number> & { total: number };
 }
 
+// ─── Fix Actions (Stage 3 LLM output for auto-optimization) ───
+
+export interface FixAction {
+  priority: 'P0' | 'P1' | 'P2';
+  target_file: string;
+  target_param?: string;
+  action: 'modify' | 'add' | 'remove';
+  current_value?: string;
+  suggested_value?: string;
+  rationale: string;
+  detection_rule: string;
+}
+
 // ─── Analysis Result (full pipeline output) ───
 
 export interface AnalysisResult {

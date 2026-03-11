@@ -201,8 +201,11 @@ function spawnOneAgent(agent: AgentConfig, team: TeamConfig, hubUrl: string): vo
     const safeCmd = spawnCmd.replace(/'/g, "'\\''");
 
     if (process.platform === 'win32') {
-        // Windows Terminal
-        const wtCmd = `wt -w new --title "${agent.name}" -d "${agent.cwd}" cmd /k "chcp 65001 >nul && ${spawnCmd}"`;
+        // Windows Terminal — use a launcher .cmd file to avoid nested-quote parsing issues
+        const launcherPath = `${tmpdir()}\\vibehq-launch-${agent.name.replace(/\s/g, '_')}-${Date.now()}.cmd`;
+        const launcherContent = `@echo off\nchcp 65001 >nul\ncd /d "${agent.cwd}"\n${spawnCmd}\npause\n`;
+        writeFileSync(launcherPath, launcherContent);
+        const wtCmd = `wt -w new --title "${agent.name}" cmd /k "${launcherPath}"`;
         exec(wtCmd);
 
     } else if (process.platform === 'darwin') {
@@ -471,8 +474,19 @@ async function analyzeTeam(configPath: string): Promise<void> {
 
         if (action === 'save-llm') {
             try {
-                console.log(`  ${c.dim}Running LLM analysis...${c.reset}`);
-                const reportCard = await runLlmAnalysis(metrics, flags, events);
+                // Pass team config for LLM context (fix_actions)
+                const teamConfig = {
+                    name: team.name,
+                    agents: team.agents.map(a => ({
+                        name: a.name,
+                        role: a.role,
+                        cli: a.cli,
+                        hasSystemPrompt: !!(a as any).systemPrompt,
+                        systemPromptLength: ((a as any).systemPrompt || '').length,
+                    })),
+                };
+                console.log(`  ${c.dim}Running LLM analysis (with fix_actions)...${c.reset}`);
+                const reportCard = await runLlmAnalysis(metrics, flags, events, undefined, teamConfig);
                 saveReportCard(metrics.runId, reportCard);
                 console.log('');
                 console.log(formatReportCard(reportCard));

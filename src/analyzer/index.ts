@@ -8,6 +8,7 @@ export {
 } from './history-store.js';
 export {
   runLlmAnalysis, sampleMessages, shouldTriggerLlm, formatReportCard,
+  collectFrameworkContext,
 } from './llm-analyst.js';
 export { resolveTeamLogs, filterSessionWindow } from './log-resolver.js';
 export type * from './types.js';

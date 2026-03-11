@@ -10,3 +10,15 @@ npm-debug.log*
 
 # Analytics local config (may contain API keys)
 analytics-config.json
+
+# Local benchmark data (JSONL logs, session-specific)
+data/
+
+# Codex/Gemini auto-generated instruction files
+codex.md
+.gemini/
+
+# Personal notes / scratch files
+Alan
+需要修正的問題.md
+VibHQ Post-Run Analysis System.md

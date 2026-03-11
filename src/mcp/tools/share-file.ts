@@ -29,11 +29,67 @@ export function registerShareFile(server: McpServer, team: string, hub: HubClien
             try {
                 const dir = getSharedDir(team);
                 const filepath = join(dir, filename);
+
+                // Content validation: reject stubs and regressions
+                const ext = filename.split('.').pop()?.toLowerCase() || '';
+                const MIN_SIZE: Record<string, number> = {
+                    html: 500, json: 100, md: 200, csv: 100,
+                    js: 200, ts: 200, css: 200,
+                };
+                const minSize = MIN_SIZE[ext];
+                const contentSize = Buffer.byteLength(content, 'utf-8');
+
+                // Hard block: never allow empty content
+                if (contentSize === 0) {
+                    return {
+                        content: [{
+                            type: 'text' as const,
+                            text: `❌ Empty content rejected. You must provide actual file content. ` +
+                                `If the file already exists, use read_shared_file to read it instead.`,
+                        }],
+                        isError: true,
+                    };
+                }
+
+                // Regression check: if file already exists, reject if new content is <20% of old
+                if (existsSync(filepath)) {
+                    const previousSize = statSync(filepath).size;
+                    if (previousSize > 500 && contentSize < previousSize * 0.2) {
+                        return {
+                            content: [{
+                                type: 'text' as const,
+                                text: `❌ Content regression: ${contentSize} bytes, down from ${previousSize} bytes ` +
+                                    `(${Math.round((1 - contentSize / previousSize) * 100)}% smaller). ` +
+                                    `This looks truncated. Please share the complete content.`,
+                            }],
+                            isError: true,
+                        };
+                    }
+                }
+
+                // Stub pattern check for small files
+                if (minSize && contentSize < minSize && contentSize > 0) {
+                    const STUB_RX = [
+                        /^<html>\s*<body>\s*(TODO|placeholder)/i,
+                        /^\{\s*"placeholder"/,
+                        /^#\s*(TODO|TBD|placeholder)/i,
+                    ];
+                    if (STUB_RX.some(p => p.test(content.trim()))) {
+                        return {
+                            content: [{
+                                type: 'text' as const,
+                                text: `❌ Content appears to be a stub (${contentSize} bytes, min ${minSize} for .${ext}). ` +
+                                    `Please provide the FULL content.`,
+                            }],
+                            isError: true,
+                        };
+                    }
+                }
+
                 writeFileSync(filepath, content, 'utf-8');
 
                 // Auto-register as artifact so orchestrator sees it immediately
-                // Infer type from extension
-                const ext = filename.split('.').pop()?.toLowerCase() || '';
+                // Infer type from extension (reuse ext from above)
                 const typeMap: Record<string, string> = {
                     json: 'code', md: 'spec', html: 'code', css: 'code',
                     js: 'code', ts: 'code', txt: 'other',

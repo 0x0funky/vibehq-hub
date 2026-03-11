@@ -28,7 +28,7 @@ export function extractMetrics(events: NormalizedEvent[], runId?: string): RunMe
   const taskDescription = detectTaskDescription(events);
 
   // Unique agents
-  const agentIds = [...new Set(events.map(e => e.agentId))];
+  const agentIds = [...new Set(events.map(e => e.agentId))].filter(id => id && id.trim() !== '');
 
   // Per-agent metrics
   const agents: AgentMetrics[] = agentIds.map(id => buildAgentMetrics(id, events, metaEvents));
@@ -372,26 +372,40 @@ function extractTasks(events: NormalizedEvent[]): TaskMetrics[] {
     }
   }
 
-  // Remove pending_ tasks that only have a single "created" transition (from Codex create_task
-  // calls where we don't have the returned task_id). These are duplicates of real tasks that
-  // were picked up from Claude-side [TASK xxx] messages.
-  // BUT keep tasks assigned to agents with no real tasks (e.g. Dave who never connected).
-  const realTaskAssignees = new Set<string>();
+  // Remove pending_ tasks that are phantom duplicates of real tasks.
+  // These arise when Codex's create_task MCP call is logged as a raw message (creating a pending_
+  // entry) while the hub also tracks the task under a real UUID. We match by:
+  //   1. Assignee overlap (any real task covers this agent)
+  //   2. Description similarity (pending_ description is a substring of a real task's description or vice versa)
+  // Keep pending_ tasks only if the assignee has NO real tasks AND no description match exists.
+  const realTasks: Array<{ assignee: string; description: string }> = [];
   for (const [key, task] of tasks) {
-    if (!key.startsWith('pending_') && task.assignee) {
-      realTaskAssignees.add(task.assignee.toLowerCase());
+    if (!key.startsWith('pending_')) {
+      realTasks.push({
+        assignee: (task.assignee || '').toLowerCase(),
+        description: (task.description || '').toLowerCase().substring(0, 80),
+      });
     }
   }
   for (const [key, task] of tasks) {
     if (key.startsWith('pending_')
       && task.stateTransitions.length === 1
       && task.stateTransitions[0].to === 'created') {
-      // Keep if assignee is not covered by any real task
-      const assigneeLower = (task.assignee || '').toLowerCase();
-      if (assigneeLower && !realTaskAssignees.has(assigneeLower)) {
-        continue; // keep — this agent's tasks only exist in pending form
+      const pendingDesc = (task.description || '').toLowerCase().substring(0, 60);
+      const pendingAssignee = (task.assignee || '').toLowerCase();
+
+      // Check if any real task has a matching assignee OR overlapping description
+      const hasMatch = realTasks.some(rt =>
+        rt.assignee === pendingAssignee ||
+        (pendingDesc.length > 15 && (rt.description.includes(pendingDesc.substring(0, 30)) || pendingDesc.includes(rt.description.substring(0, 30))))
+      );
+
+      // Also drop if there are real tasks at all and this pending task never progressed
+      const hasAnyRealTasks = realTasks.length > 0;
+
+      if (hasMatch || hasAnyRealTasks) {
+        tasks.delete(key);
       }
-      tasks.delete(key);
     }
   }
 

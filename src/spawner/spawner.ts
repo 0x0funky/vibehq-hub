@@ -51,6 +51,23 @@ export interface SpawnerOptions {
     rows?: number;
 }
 
+// Roles that should NOT use implementation tools (Write, Edit, Bash, shell_command)
+const ORCHESTRATOR_ROLES = [
+    'project manager', 'pm', 'orchestrator', 'coordinator', 'team lead',
+    'product manager', 'scrum master', 'program manager',
+];
+
+const ORCHESTRATOR_TOOL_CONSTRAINT = `
+
+## CRITICAL: Tool Usage Restriction (Enforced by VibHQ)
+You are in an ORCHESTRATOR role. You must NEVER use ANY implementation tools:
+- ❌ FORBIDDEN: Write, Edit, Bash, shell_command, execute_command, Read, Glob, Grep, ToolSearch, NotebookEdit — any file browsing or modification tool
+- ❌ FORBIDDEN: Running shell commands of any kind — no npm, no git, no ls, no cat, NOTHING
+- ❌ FORBIDDEN: Scanning project directories with Glob or Grep — you are NOT a code reviewer, you coordinate
+- ✅ ALLOWED: ONLY MCP coordination tools — create_task, ask_teammate, reply_to_team, post_update, list_tasks, publish_artifact, share_file, read_shared_file, check_status, list_teammates, publish_contract, sign_contract, check_contract, reassign_task, complete_task, accept_task, update_task, list_artifacts, get_team_updates, list_shared_files
+If you discover a bug, a missing file, or need ANY code changes — create_task for the appropriate engineer with full context.
+EVERY time you use Glob, Read, or shell_command, you waste your coordination context and hurt the team.`;
+
 export class AgentSpawner {
     private ptyProcess: pty.IPty | null = null;
     private ws: WebSocket | null = null;
@@ -70,6 +87,7 @@ export class AgentSpawner {
     }
 
     async start(): Promise<void> {
+        this.applyRoleConstraints();
         this.autoConfigureMcp();
         this.spawnCli();
         await this.connectToHub();
@@ -99,6 +117,23 @@ export class AgentSpawner {
      * - Codex: writes codex.md in project root
      * - Gemini: writes .gemini/GEMINI.md in project root
      */
+    /**
+     * Apply role-based system prompt modifications before spawning.
+     * Auto-appends orchestrator tool constraints for PM/coordinator roles.
+     */
+    private applyRoleConstraints(): void {
+        const { role, systemPrompt } = this.options;
+        if (!systemPrompt) return;
+
+        const isOrchestrator = ORCHESTRATOR_ROLES.some(r =>
+            role.toLowerCase().includes(r)
+        );
+        if (isOrchestrator && !systemPrompt.includes('Tool Usage Restriction')) {
+            this.options.systemPrompt = systemPrompt + ORCHESTRATOR_TOOL_CONSTRAINT;
+            console.error(`[Spawner] Orchestrator role "${role}" detected — tool constraint injected`);
+        }
+    }
+
     private injectSystemPrompt(): void {
         const { command, systemPrompt } = this.options;
         if (!systemPrompt) return;
@@ -362,14 +397,34 @@ export class AgentSpawner {
         const rows = webMode ? (this.options.rows || 24) : (process.stdout.rows || 24);
         const cmd = command.toLowerCase();
 
-        // Build spawn args — append system prompt flag for Claude
+        // Build spawn args
         let spawnArgs = [...args];
-        if (systemPrompt && (cmd === 'claude' || cmd.includes('claude'))) {
-            spawnArgs.push('--append-system-prompt', systemPrompt);
-        }
-        // Add --dangerously-skip-permissions for Claude if enabled
-        if (this.options.dangerouslySkipPermissions && (cmd === 'claude' || cmd.includes('claude'))) {
-            spawnArgs.push('--dangerously-skip-permissions');
+
+        const isOrchestrator = ORCHESTRATOR_ROLES.some(r =>
+            this.options.role.toLowerCase().includes(r)
+        );
+
+        if (cmd === 'claude' || cmd.includes('claude')) {
+            // --dangerously-skip-permissions MUST come first (before long --append-system-prompt)
+            if (this.options.dangerouslySkipPermissions) {
+                spawnArgs.push('--dangerously-skip-permissions');
+            }
+            if (systemPrompt) {
+                spawnArgs.push('--append-system-prompt', systemPrompt);
+            }
+            // Orchestrator tool enforcement: --disallowedTools at CLI level (cannot be bypassed)
+            if (isOrchestrator) {
+                spawnArgs.push('--disallowedTools', 'Bash', 'Write', 'Edit', 'Read', 'NotebookEdit', 'Glob', 'Grep', 'ToolSearch');
+                console.error(`[Spawner] ${this.options.name}: orchestrator — implementation tools blocked via --disallowedTools`);
+            }
+        } else if (cmd === 'codex' || cmd.includes('codex')) {
+            // Codex orchestrator: use read-only sandbox to limit shell_command damage
+            // NOTE: Codex cannot fully block shell_command — consider using Claude for orchestrator roles
+            if (isOrchestrator) {
+                spawnArgs.push('--sandbox', 'read-only');
+                console.error(`[Spawner] ${this.options.name}: orchestrator on Codex — enforcing read-only sandbox`);
+                console.error(`[Spawner] ⚠️  WARNING: Codex cannot fully block shell_command. Consider using Claude (cli: "claude") for orchestrator roles — it supports --disallowedTools for hard enforcement.`);
+            }
         }
         // Add --add-dir flags for Claude
         if (this.options.additionalDirs?.length && (cmd === 'claude' || cmd.includes('claude'))) {
@@ -378,6 +433,7 @@ export class AgentSpawner {
             }
         }
 
+        console.error(`[Spawner] ${this.options.name}: pty.spawn("${resolvedCommand}", [${spawnArgs.map((a, i) => `\n  [${i}] ${a.length > 80 ? a.slice(0, 80) + '...' : a}`).join('')}\n])`);
         this.ptyProcess = pty.spawn(resolvedCommand, spawnArgs, {
             name: 'xterm-color',
             cols,
