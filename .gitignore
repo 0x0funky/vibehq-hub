@@ -29,3 +29,6 @@ chart/*.jpg
 
 # Web build output
 web-dist/
+
+# Local team config (contains personal project paths)
+vibehq.config.json
