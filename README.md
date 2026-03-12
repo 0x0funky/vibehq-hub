@@ -150,6 +150,10 @@ npm run build
 
 ### Terminal (TUI)
 
+<p align="center">
+  <img src="images/vibehq_index.png" alt="VibeHQ TUI" width="700" />
+</p>
+
 ```bash
 vibehq
 ```
