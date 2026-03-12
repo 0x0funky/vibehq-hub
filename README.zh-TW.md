@@ -145,15 +145,29 @@ https://github.com/user-attachments/assets/6f0fe691-bef8-49f9-a0ce-a65b215d264f
 ```bash
 git clone https://github.com/0x0funky/vibehq-hub.git
 cd vibehq-hub && npm install
-npm run build && npm run build:web
-node dist/bin/web.js
+npm run build
 ```
 
-開啟 `http://localhost:3100` — 建立團隊、加入 agent、按 Start。
+### 終端機（TUI）
+
+```bash
+vibehq
+```
+
+互動式選單 — 選擇團隊、設定 agent、啟動。所有操作都在終端機完成。
+
+### Web 控制台
+
+```bash
+npm run build:web
+vibehq-web
+```
+
+開啟 `http://localhost:3100` — 建立團隊、加入 agent、按 Start。在瀏覽器管理一切。
 
 ```bash
 # 加上驗證（建議 LAN/手機存取時使用）
-VIBEHQ_AUTH=admin:secret node dist/bin/web.js
+VIBEHQ_AUTH=admin:secret vibehq-web
 ```
 
 伺服器會印出 LAN IP — 手機開啟就能用。

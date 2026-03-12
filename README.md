@@ -128,7 +128,7 @@ We built a closed-loop system: run a benchmark → analyze the logs → `/optimi
 
 ## 📱 Web Dashboard — Desktop & Mobile
 
-Manage everything from a browser. Start agents on your PC, monitor from your phone.
+Start agents on your PC, monitor from your phone.
 
 ### Mobile
 
@@ -145,15 +145,29 @@ https://github.com/user-attachments/assets/6f0fe691-bef8-49f9-a0ce-a65b215d264f
 ```bash
 git clone https://github.com/0x0funky/vibehq-hub.git
 cd vibehq-hub && npm install
-npm run build && npm run build:web
-node dist/bin/web.js
+npm run build
 ```
 
-Open `http://localhost:3100` — create a team, add agents, hit Start.
+### Terminal (TUI)
+
+```bash
+vibehq
+```
+
+Interactive menu — select a team, configure agents, start. Everything runs in your terminal.
+
+### Web Dashboard
+
+```bash
+npm run build:web
+vibehq-web
+```
+
+Open `http://localhost:3100` — create a team, add agents, hit Start. Manage everything from a browser.
 
 ```bash
 # With auth (recommended for LAN/mobile access)
-VIBEHQ_AUTH=admin:secret node dist/bin/web.js
+VIBEHQ_AUTH=admin:secret vibehq-web
 ```
 
 The server prints your LAN IP — open it on your phone and you're in.

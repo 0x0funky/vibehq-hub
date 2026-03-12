@@ -145,15 +145,29 @@ https://github.com/user-attachments/assets/6f0fe691-bef8-49f9-a0ce-a65b215d264f
 ```bash
 git clone https://github.com/0x0funky/vibehq-hub.git
 cd vibehq-hub && npm install
-npm run build && npm run build:web
-node dist/bin/web.js
+npm run build
 ```
 
-`http://localhost:3100` を開く — チーム作成、エージェント追加、Start を押す。
+### ターミナル（TUI）
+
+```bash
+vibehq
+```
+
+インタラクティブメニュー — チーム選択、エージェント設定、起動。すべてターミナルで完結。
+
+### Web ダッシュボード
+
+```bash
+npm run build:web
+vibehq-web
+```
+
+`http://localhost:3100` を開く — チーム作成、エージェント追加、Start を押す。ブラウザですべてを管理。
 
 ```bash
 # 認証付き（LAN/モバイルアクセス時推奨）
-VIBEHQ_AUTH=admin:secret node dist/bin/web.js
+VIBEHQ_AUTH=admin:secret vibehq-web
 ```
 
 サーバーが LAN IP を表示 — スマホで開けばすぐに使える。
