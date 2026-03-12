@@ -8,7 +8,7 @@
 
 Running 5 AI agents in parallel is easy. Making them actually work together — without breaking each other's code, duplicating work, or burning millions of tokens on nothing — is the hard part.
 
-We've been building [VibHQ](https://github.com/anthropics/vibehq), a coordination protocol for multi-agent CLI teams (Claude Code, Codex, Gemini CLI). After months of watching agents fail in the same predictable ways, we realized something:
+We've been building [VibeHQ](https://github.com/0x0funky/vibehq-hub), a coordination protocol for multi-agent CLI teams (Claude Code, Codex, Gemini CLI). After months of watching agents fail in the same predictable ways, we realized something:
 
 **Multi-agent failures are not random. They are systematic, measurable, and fixable — if you have the right feedback loop.**
 
@@ -387,7 +387,7 @@ vibehq-analyze --team my-team --with-llm
 /optimize-protocol
 ```
 
-GitHub: [vibehq/vibehq](https://github.com/vibehq/vibehq)
+GitHub: [VibeHQ](https://github.com/0x0funky/vibehq-hub)
 
 ---
 
