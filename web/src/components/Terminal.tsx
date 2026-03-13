@@ -152,10 +152,14 @@ export function Terminal({ team, agentName, isRunning }: Props) {
     const atBottomRef = useRef(true);
     const [atBottom, setAtBottom] = useState(true);
     const [connected, setConnected] = useState(false);
+    const [reconnecting, setReconnecting] = useState(false);
     const [isTouch] = useState(() => 'ontouchstart' in window || navigator.maxTouchPoints > 0);
     const [cmdInput, setCmdInput] = useState('');
     const [isFullscreen, setIsFullscreen] = useState(false);
     const isFullscreenRef = useRef(false);
+    const unmountedRef = useRef(false);
+    const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const reconnectDelayRef = useRef(1000);
 
     useEffect(() => { isFullscreenRef.current = isFullscreen; }, [isFullscreen]);
 
@@ -209,8 +213,73 @@ export function Terminal({ team, agentName, isRunning }: Props) {
         });
     }, []);
 
+    const setupWs = useCallback((xterm: XTerm, fitAddon: FitAddon) => {
+        if (wsRef.current) {
+            wsRef.current.onclose = null;
+            wsRef.current.onerror = null;
+            wsRef.current.close();
+        }
+
+        const ws = connectTerminal(team, agentName);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+            setConnected(true);
+            setReconnecting(false);
+            reconnectDelayRef.current = 1000;
+            const dims = fitAddon.proposeDimensions();
+            if (dims?.cols && dims?.rows) {
+                ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+            }
+        };
+
+        ws.onmessage = (event) => {
+            const wasAtBottom = atBottomRef.current;
+            xterm.write(event.data, () => {
+                if (wasAtBottom) xterm.scrollToBottom();
+            });
+        };
+
+        ws.onclose = () => {
+            setConnected(false);
+            if (!unmountedRef.current) {
+                setReconnecting(true);
+                const delay = reconnectDelayRef.current;
+                reconnectDelayRef.current = Math.min(delay * 2, 10000);
+                reconnectTimerRef.current = setTimeout(() => {
+                    if (!unmountedRef.current && xtermRef.current && fitRef.current) {
+                        setupWs(xtermRef.current, fitRef.current);
+                    }
+                }, delay);
+            }
+        };
+
+        ws.onerror = () => {
+            setConnected(false);
+        };
+
+        xterm.onData((data) => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(data);
+            }
+        });
+    }, [team, agentName]);
+
+    const handleReconnect = useCallback(() => {
+        if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+        }
+        reconnectDelayRef.current = 1000;
+        if (xtermRef.current && fitRef.current) {
+            setReconnecting(true);
+            setupWs(xtermRef.current, fitRef.current);
+        }
+    }, [setupWs]);
+
     useEffect(() => {
         if (!isRunning || !termRef.current) return;
+        unmountedRef.current = false;
 
         const xterm = new XTerm({
             theme: {
@@ -239,45 +308,28 @@ export function Terminal({ team, agentName, isRunning }: Props) {
         xtermRef.current = xterm;
         fitRef.current = fitAddon;
 
-        const ws = connectTerminal(team, agentName);
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-            setConnected(true);
-            const dims = fitAddon.proposeDimensions();
-            if (dims?.cols && dims?.rows) {
-                ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
-            }
-        };
-
-        ws.onmessage = (event) => {
-            const wasAtBottom = atBottomRef.current;
-            xterm.write(event.data, () => {
-                if (wasAtBottom) xterm.scrollToBottom();
-            });
-        };
-
-        ws.onclose = () => setConnected(false);
-        ws.onerror = () => setConnected(false);
-
-        xterm.onData((data) => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(data);
-            }
-        });
+        setupWs(xterm, fitAddon);
 
         const observer = new ResizeObserver(() => {
             fitAddon.fit();
             const dims = fitAddon.proposeDimensions();
-            if (dims?.cols && dims?.rows && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+            if (dims?.cols && dims?.rows && wsRef.current?.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
             }
         });
         observer.observe(termRef.current);
 
         return () => {
+            unmountedRef.current = true;
+            if (reconnectTimerRef.current) {
+                clearTimeout(reconnectTimerRef.current);
+                reconnectTimerRef.current = null;
+            }
             observer.disconnect();
-            ws.close();
+            if (wsRef.current) {
+                wsRef.current.onclose = null;
+                wsRef.current.close();
+            }
             xterm.dispose();
             xtermRef.current = null;
             wsRef.current = null;
@@ -286,7 +338,7 @@ export function Terminal({ team, agentName, isRunning }: Props) {
             setAtBottom(true);
             document.body.style.overflow = '';
         };
-    }, [team, agentName, isRunning]);
+    }, [team, agentName, isRunning, setupWs]);
 
     return (
         <div style={isFullscreen ? { ...s.container, ...s.containerFullscreen } : s.container}>
@@ -315,9 +367,18 @@ export function Terminal({ team, agentName, isRunning }: Props) {
                             </button>
                         </>
                     )}
-                    <span style={{ fontSize: '11px', color: connected ? '#3fb950' : '#8b949e' }}>
-                        {connected ? 'connected' : isRunning ? 'connecting...' : 'offline'}
+                    <span style={{ fontSize: '11px', color: connected ? '#3fb950' : reconnecting ? '#d29922' : '#8b949e' }}>
+                        {connected ? 'connected' : reconnecting ? 'reconnecting...' : isRunning ? 'connecting...' : 'offline'}
                     </span>
+                    {isRunning && !connected && (
+                        <button
+                            style={{ background: 'none', border: '1px solid #30363d', borderRadius: '4px', color: '#58a6ff', cursor: 'pointer', fontSize: '11px', padding: '2px 8px' }}
+                            onClick={handleReconnect}
+                            aria-label="Reconnect terminal"
+                        >
+                            reconnect
+                        </button>
+                    )}
                     {isRunning && (
                         <button
                             style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: '16px', padding: '0 4px' }}
