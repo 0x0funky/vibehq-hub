@@ -224,9 +224,9 @@ vibehq-analyze history --last 10             # View past runs
 
 **13 automated detection rules:** artifact regression, orchestrator role drift, stub files, task timeout, incomplete tasks, coordination overhead, unresponsive agents, zero artifacts, context bloat, duplicate artifacts, premature task accept, excessive MCP polling, task reassignment.
 
-### Skills: `/optimize-protocol` & `/benchmark-loop`
+### Skills: `/run-teamwork`, `/benchmark-loop` & `/optimize-protocol`
 
-VibeHQ ships two skills that power the self-improving loop. Skills work on both **Claude Code** and **Codex CLI** — same format, different directory.
+VibeHQ ships three skills. Skills work on both **Claude Code** and **Codex CLI** — same format, different directory.
 
 #### Cross-Platform Skill Locations
 
@@ -243,8 +243,9 @@ The `SKILL.md` format is an emerging cross-platform standard — same frontmatte
 
 ```bash
 # In Claude Code, type:
+/run-teamwork "Build an AI investment analysis platform"
+/benchmark-loop "Build a todo app" --grade A
 /optimize-protocol v1
-/benchmark-loop
 ```
 
 **Codex CLI** — copy the skills to Codex's directory:
@@ -252,15 +253,31 @@ The `SKILL.md` format is an emerging cross-platform standard — same frontmatte
 ```bash
 # Project-level (committed to repo)
 mkdir -p .agents/skills
+cp -r .claude/skills/run-teamwork .agents/skills/
 cp -r .claude/skills/optimize-protocol .agents/skills/
 cp -r .claude/skills/benchmark-loop .agents/skills/
 
 # Or user-level (available in all projects)
+cp -r .claude/skills/run-teamwork ~/.codex/skills/
 cp -r .claude/skills/optimize-protocol ~/.codex/skills/
 cp -r .claude/skills/benchmark-loop ~/.codex/skills/
 ```
 
 Then in Codex CLI, invoke with `/skills` or type `$` to mention a skill.
+
+#### `/run-teamwork` — One-Shot Team Builder
+
+Give it a project description — it designs the team, spawns agents, and builds it. No analysis, no loop.
+
+```bash
+/run-teamwork "Build an e-commerce site with payments and admin panel"
+```
+
+1. Analyzes the prompt to determine required domains and team size
+2. Generates PM system prompt with research-first workflow (research before implementation)
+3. Spawns agents in tmux (macOS/Linux) or Windows Terminal
+4. Waits for all tasks to complete
+5. Reports the output directory and file count
 
 #### `/optimize-protocol` — Framework Engineer
 

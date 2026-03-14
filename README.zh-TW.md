@@ -224,9 +224,9 @@ vibehq-analyze history --last 10             # 查看歷史
 
 **13 條自動偵測規則：** 成品回退、協調者角色偏移、Stub 檔案、任務超時、未完成任務、協調開銷、Agent 無回應、零成品產出、Context 膨脹、重複成品、過早接受任務、過度 MCP 輪詢、任務重新分派。
 
-### Skills：`/optimize-protocol` & `/benchmark-loop`
+### Skills：`/run-teamwork`、`/benchmark-loop` & `/optimize-protocol`
 
-VibeHQ 內建兩個 skill 來驅動自我改善迴圈。Skills 同時支援 **Claude Code** 和 **Codex CLI** — 相同格式，不同目錄。
+VibeHQ 內建三個 skill。Skills 同時支援 **Claude Code** 和 **Codex CLI** — 相同格式，不同目錄。
 
 #### 跨平台 Skill 位置
 
@@ -243,8 +243,9 @@ VibeHQ 內建兩個 skill 來驅動自我改善迴圈。Skills 同時支援 **Cl
 
 ```bash
 # 在 Claude Code 中輸入：
+/run-teamwork "建立一個 AI 投資分析平台"
+/benchmark-loop "建一個 Todo App" --grade A
 /optimize-protocol v1
-/benchmark-loop
 ```
 
 **Codex CLI** — 將 skill 複製到 Codex 的目錄：
@@ -252,15 +253,31 @@ VibeHQ 內建兩個 skill 來驅動自我改善迴圈。Skills 同時支援 **Cl
 ```bash
 # 專案層級（提交到 repo）
 mkdir -p .agents/skills
+cp -r .claude/skills/run-teamwork .agents/skills/
 cp -r .claude/skills/optimize-protocol .agents/skills/
 cp -r .claude/skills/benchmark-loop .agents/skills/
 
 # 或使用者層級（所有專案都可用）
+cp -r .claude/skills/run-teamwork ~/.codex/skills/
 cp -r .claude/skills/optimize-protocol ~/.codex/skills/
 cp -r .claude/skills/benchmark-loop ~/.codex/skills/
 ```
 
 然後在 Codex CLI 中，用 `/skills` 或輸入 `$` 來使用 skill。
+
+#### `/run-teamwork` — 一鍵建專案
+
+給它專案描述 — 自動設計團隊、啟動 agent、建出成品。不分析、不 loop。
+
+```bash
+/run-teamwork "建立一個有付款和管理後台的電商網站"
+```
+
+1. 分析 prompt 判斷需要的技術領域和團隊規模
+2. 產生 PM 系統提示，採用先調研再實作的工作流程
+3. 用 tmux（macOS/Linux）或 Windows Terminal 啟動 agent
+4. 等待所有任務完成
+5. 回報產出目錄和檔案數量
 
 #### `/optimize-protocol` — 框架工程師
 

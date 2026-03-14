@@ -209,7 +209,13 @@ function spawnOneAgent(agent: AgentConfig, team: TeamConfig, hubUrl: string): vo
         exec(wtCmd);
 
     } else if (process.platform === 'darwin') {
-        // Mac: create a temp launcher script to avoid quoting issues with osascript
+        // Mac: check if inside tmux session first
+        if (process.env.TMUX) {
+            exec(`tmux new-window -n "${agent.name}" "cd '${agent.cwd}' && ${safeCmd}; exec $SHELL"`);
+            return;
+        }
+
+        // Mac (no tmux): create a temp launcher script to avoid quoting issues with osascript
         const launcherPath = `${tmpdir()}/vibehq-launch-${agent.name.replace(/\s/g, '_')}-${Date.now()}.sh`;
         writeFileSync(launcherPath, `#!/bin/bash\ncd '${agent.cwd.replace(/'/g, "'\\''")}'\n${safeCmd}\nexec bash\n`, { mode: 0o755 });
 
