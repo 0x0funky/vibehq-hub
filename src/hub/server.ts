@@ -397,10 +397,21 @@ export function startHub(options: HubOptions): HubContext {
                     const team = requester.team || 'default';
                     const allUpdates = teamUpdates.get(team) || [];
                     const limit = msg.limit || 20;
+                    const recent = allUpdates.slice(-limit);
+
+                    // Context compression: return last 10 in full, older ones as compact summaries
+                    const FULL_DETAIL_COUNT = 10;
+                    const compressed = recent.map((u, i) => {
+                        if (i >= recent.length - FULL_DETAIL_COUNT) return u;
+                        // Compact: truncate message to first line, max 120 chars
+                        const firstLine = u.message.split('\n')[0];
+                        const truncated = firstLine.length > 120 ? firstLine.substring(0, 117) + '...' : firstLine;
+                        return { ...u, message: truncated };
+                    });
 
                     ws.send(JSON.stringify({
                         type: 'team:update:list:response',
-                        updates: allUpdates.slice(-limit),
+                        updates: compressed,
                     } satisfies TeamUpdateListResponseMessage));
                     break;
                 }

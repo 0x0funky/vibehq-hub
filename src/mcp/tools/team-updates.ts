@@ -8,14 +8,28 @@ import type { HubClient } from '../hub-client.js';
 import type { McpRateLimiter } from '../rate-limiter.js';
 import type { TeamUpdate } from '../../shared/types.js';
 
+/** Max characters allowed per post_update. Enforces concise team communication. */
+const POST_UPDATE_MAX_CHARS = 500;
+
 export function registerPostUpdate(server: McpServer, hubClient: HubClient): void {
     server.tool(
         'post_update',
-        'Post a progress update visible to all teammates. Use this to announce completed work, decisions made, or status changes. Keep updates concise.',
+        `Post a progress update visible to all teammates. Keep it concise (max ${POST_UPDATE_MAX_CHARS} chars). Use scratchpad for private thinking first, then post only the conclusion here.`,
         {
             message: z.string().describe('Progress update message (e.g. "API spec completed, saved to api-spec.md")'),
         },
         async ({ message }) => {
+            // Enforce size limit — reject verbose updates
+            if (message.length > POST_UPDATE_MAX_CHARS) {
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `Update rejected: ${message.length} chars exceeds ${POST_UPDATE_MAX_CHARS} char limit. Use scratchpad for detailed thinking, then post a concise summary here.`,
+                    }],
+                    isError: true,
+                };
+            }
+
             try {
                 hubClient.postUpdate(message);
                 return {

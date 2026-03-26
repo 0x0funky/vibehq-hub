@@ -16,6 +16,7 @@ import { registerPostUpdate, registerGetTeamUpdates } from './tools/team-updates
 import { registerCreateTask, registerAcceptTask, registerUpdateTask, registerCompleteTask, registerListTasks, registerReassignTask } from './tools/task-lifecycle.js';
 import { registerPublishArtifact, registerListArtifacts } from './tools/artifact.js';
 import { registerPublishContract, registerSignContract, registerCheckContract } from './tools/contract.js';
+import { registerScratchpad } from './tools/scratchpad.js';
 
 export interface AgentOptions {
     name: string;
@@ -71,6 +72,9 @@ export async function startAgent(options: AgentOptions): Promise<void> {
     registerPublishContract(server, hub);
     registerSignContract(server, hub);
     registerCheckContract(server, hub);
+
+    // V3: Inner monologue — private notes not broadcast to team
+    registerScratchpad(server);
 
 
     // Connect to Hub
