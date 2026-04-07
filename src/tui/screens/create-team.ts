@@ -7,6 +7,7 @@ import { c, screen, cursor, getWidth, padRight } from '../renderer.js';
 import { prompt, confirm, selectInput } from '../input.js';
 import { ROLE_PRESETS, getPresetByRole } from '../role-presets.js';
 import { selectMenu } from '../menu.js';
+import { normalizeAgentCwd } from '../../shared/path-utils.js';
 
 interface AgentConfig {
     name: string;
@@ -73,7 +74,7 @@ export async function createTeamScreen(): Promise<string | null> {
         }
 
         const cli = await selectInput('  CLI type', ['claude', 'codex', 'gemini', 'aider', 'cursor']);
-        const cwd = await prompt('  Project directory');
+        const cwd = normalizeAgentCwd(await prompt('  Project directory'));
 
         agents.push({ name, role: customRole, cli, cwd, systemPrompt });
         agentNum++;

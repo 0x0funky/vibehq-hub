@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { getPresetByRole } from '../../tui/role-presets.js';
+import { normalizeAgentCwd } from '../../shared/path-utils.js';
 
 export const agentsRouter = Router();
 
@@ -65,7 +66,7 @@ agentsRouter.post('/:team/agents', (req, res) => {
         name: req.body.name,
         role,
         cli: req.body.cli || 'claude',
-        cwd: req.body.cwd,
+        cwd: normalizeAgentCwd(req.body.cwd || ''),
         systemPrompt: resolveSystemPrompt(role, req.body.rolePreset, req.body.systemPrompt),
         dangerouslySkipPermissions: req.body.dangerouslySkipPermissions,
         additionalDirs: req.body.additionalDirs,
@@ -93,7 +94,11 @@ agentsRouter.put('/:team/agents/:name', (req, res) => {
     const idx = team.agents.findIndex((a: any) => a.name === req.params.name);
     if (idx === -1) { res.status(404).json({ error: 'Agent not found' }); return; }
 
-    team.agents[idx] = { ...team.agents[idx], ...req.body, name: req.params.name };
+    const next = { ...team.agents[idx], ...req.body, name: req.params.name };
+    if (typeof next.cwd === 'string') {
+        next.cwd = normalizeAgentCwd(next.cwd);
+    }
+    team.agents[idx] = next;
     saveTeams(configPath, teams);
     res.json(team.agents[idx]);
 });

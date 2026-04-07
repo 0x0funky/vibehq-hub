@@ -6,6 +6,7 @@ import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { c, screen, cursor, box, padRight, getWidth } from '../renderer.js';
 import { selectMenu } from '../menu.js';
 import { prompt, confirm, selectInput } from '../input.js';
+import { normalizeAgentCwd } from '../../shared/path-utils.js';
 
 interface AgentConfig {
     name: string;
@@ -93,7 +94,7 @@ export async function settingsScreen(configPath: string): Promise<void> {
             const name = await prompt('  Name');
             const role = await prompt('  Role', 'Engineer');
             const cli = await selectInput('  CLI type', ['claude', 'codex', 'gemini']);
-            const cwd = await prompt('  Project directory');
+            const cwd = normalizeAgentCwd(await prompt('  Project directory'));
             team.agents.push({ name, role, cli, cwd });
             saveConfig(configPath, config);
             console.log(`\n  ${c.green}✓${c.reset} Added ${c.bold}${name}${c.reset}\n`);

@@ -8,6 +8,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { encodeClaudeProjectPath } from '../shared/path-utils.js';
 
 interface AgentLogConfig {
   name: string;
@@ -75,7 +76,7 @@ function loadRecordedLogs(teamName: string): Record<string, { path: string; cli:
 }
 
 function findClaudeLogs(agent: AgentLogConfig): ResolvedLog[] {
-  const encodedPath = agent.cwd.replace(/[\\\\//:]/g, '-');
+  const encodedPath = encodeClaudeProjectPath(agent.cwd);
   const projectDir = join(homedir(), '.claude', 'projects', encodedPath);
 
   if (!existsSync(projectDir)) return [];

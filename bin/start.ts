@@ -17,6 +17,7 @@ import { getPresetByRole } from '../src/tui/role-presets.js';
 import { selectMenu } from '../src/tui/menu.js';
 import { prompt } from '../src/tui/input.js';
 import { resolveTeamLogs } from '../src/analyzer/log-resolver.js';
+import { encodeClaudeProjectPath } from '../src/shared/path-utils.js';
 import {
     parseLogFile, extractMetrics, detectPatterns,
     formatReport, saveRun, formatReportCard,
@@ -420,7 +421,7 @@ async function analyzeTeam(configPath: string): Promise<void> {
         console.log('');
         // Show what paths were checked
         for (const agent of team.agents) {
-            const label = agent.cli === 'codex' ? '~/.codex/sessions/' : `~/.claude/projects/${agent.cwd.replace(/[\\\\//:]/g, '-')}/`;
+            const label = agent.cli === 'codex' ? '~/.codex/sessions/' : `~/.claude/projects/${encodeClaudeProjectPath(agent.cwd)}/`;
             console.log(`    ${c.dim}${agent.name} (${agent.cli}) -> ${label}${c.reset}`);
         }
         console.log('');
