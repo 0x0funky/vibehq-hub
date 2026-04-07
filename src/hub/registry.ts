@@ -48,23 +48,10 @@ export class AgentRegistry {
             }
         }
 
-        // --- Dedup: same directory + same CLI = same slot (even if name changed) ---
-        if (msg.cwd && msg.cli) {
-            for (const [existingWs, existingAgent] of this.agents) {
-                if (existingAgent.cwd === msg.cwd && existingAgent.cli === msg.cli && existingAgent.team === team) {
-                    this.log(`Dedup: kicking ${existingAgent.name} (${existingAgent.id}) — same cwd+cli (${msg.cli} @ ${msg.cwd}), replaced by ${msg.name}`);
-                    this.agents.delete(existingWs);
-                    this.broadcastToTeam(team, {
-                        type: 'agent:disconnected',
-                        agentId: existingAgent.id,
-                        name: existingAgent.name,
-                    } satisfies AgentDisconnectedMessage);
-                    // Tell the kicked client NOT to reconnect
-                    try { existingWs.send(JSON.stringify({ type: 'agent:replaced', reason: 'cwd_dedup', replacedBy: msg.name })); } catch { }
-                    try { existingWs.close(); } catch { }
-                }
-            }
-        }
+        // Note: cwd+cli dedup intentionally removed.
+        // For multi-agent Codex teams all agents share the same cwd+cli, so deduping
+        // on that would kick legitimate teammates. The name+team dedup above is sufficient
+        // to handle reconnect scenarios (MCP servers always restart with the same --name arg).
 
         const agentId = randomUUID();
         const agent: ConnectedAgent = {
