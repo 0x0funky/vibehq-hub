@@ -3,6 +3,7 @@
 // ============================================================
 
 import { AgentSpawner } from '../spawner/spawner.js';
+import { getPresetByRole } from '../tui/role-presets.js';
 import type WebSocket from 'ws';
 
 interface AgentConfig {
@@ -38,6 +39,9 @@ export class PtyManager {
             return; // Already running
         }
 
+        const effectiveSystemPrompt = agentConfig.systemPrompt
+            || getPresetByRole(agentConfig.role)?.defaultSystemPrompt;
+
         const managed: ManagedAgent = {
             spawner: null as any,
             subscribers: new Set(),
@@ -54,7 +58,7 @@ export class PtyManager {
             command: agentConfig.cli,
             args: [],
             cwd: agentConfig.cwd,
-            systemPrompt: agentConfig.systemPrompt,
+            systemPrompt: effectiveSystemPrompt,
             dangerouslySkipPermissions: agentConfig.dangerouslySkipPermissions,
             additionalDirs: agentConfig.additionalDirs,
             webMode: true,
