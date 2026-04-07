@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createAgent, pickFolder } from '../api';
 import { ROLE_PRESETS, getPresetByRole } from '../../../src/tui/role-presets.ts';
+import { normalizeAgentCwd } from '../../../src/shared/path-utils.ts';
 
 const CLI_OPTIONS = ['claude', 'codex', 'gemini', 'aider', 'cursor'];
 
@@ -93,7 +94,7 @@ export function AddAgentModal({ team, onClose, onCreated }: Props) {
         try {
             // Server opens native OS folder picker (PowerShell / osascript / zenity)
             const result = await pickFolder();
-            if (result?.path) setCwd(result.path);
+            if (result?.path) setCwd(normalizeAgentCwd(result.path));
         } catch (err: any) {
             setError(err?.message || 'Failed to select folder');
         } finally {
@@ -106,6 +107,7 @@ export function AddAgentModal({ team, onClose, onCreated }: Props) {
         if (!name.trim()) { setError('Agent name is required'); return; }
         if (!effectiveRole) { setError('Please select a role'); return; }
         if (!cwd.trim()) { setError('Project directory (CWD) is required'); return; }
+        const normalizedCwd = normalizeAgentCwd(cwd);
 
         try {
             await createAgent(team, {
@@ -113,7 +115,7 @@ export function AddAgentModal({ team, onClose, onCreated }: Props) {
                 role: effectiveRole,
                 rolePreset: selectedRole,
                 cli,
-                cwd: cwd.trim(),
+                cwd: normalizedCwd,
                 systemPrompt: systemPrompt.trim() || undefined,
                 dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
             });

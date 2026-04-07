@@ -5,6 +5,7 @@ import { open } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import WebSocket from 'ws';
+import { encodeClaudeProjectPath, normalizeAgentCwd } from '../shared/path-utils.js';
 import type {
     AgentStatusBroadcastMessage,
     AgentDisconnectedMessage,
@@ -309,8 +310,7 @@ export class AgentSpawner {
 
         // Claude Code uses forward-slash path keys on Windows
         const cwd = this.options.cwd || process.cwd();
-        // Normalize: backslash→forward, collapse double slashes, remove trailing slash
-        const cwdForward = cwd.replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/\/$/, '');
+        const cwdForward = normalizeAgentCwd(cwd);
 
         // Guard: never register MCP at drive root — it would infect ALL sessions on that drive
         if (/^[A-Za-z]:$/.test(cwdForward) || cwdForward === '/') {
@@ -730,11 +730,13 @@ export class AgentSpawner {
      */
     private watchClaudeTranscript(): void {
         // Use the configured cwd (from vibehq.config), not process.cwd()
-        const cwd = this.options.cwd || this.options.args.find((_, i, arr) => i > 0 && arr[i - 1] === '--cwd') || process.cwd();
+        const cwd = normalizeAgentCwd(
+            this.options.cwd || this.options.args.find((_, i, arr) => i > 0 && arr[i - 1] === '--cwd') || process.cwd()
+        );
         // Claude Code encodes project paths by replacing path separators with dashes
         // Windows: D:\\testuse\\B -> D--testuse-B (: -> -, \\ -> -)
         // Unix:    /home/user/project -> -home-user-project (/ -> -)
-        const encodedPath = cwd.replace(/[\\\\//:]/g, '-');
+        const encodedPath = encodeClaudeProjectPath(cwd);
         // Claude Code v2.1+ stores sessions directly in the project directory (no /sessions/ subdir)
         const sessionsDir = join(homedir(), '.claude', 'projects', encodedPath);
 
