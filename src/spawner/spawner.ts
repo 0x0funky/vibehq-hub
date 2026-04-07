@@ -175,8 +175,8 @@ export class AgentSpawner {
             // Claude: handled via spawn args in spawnCli()
             // Nothing to do here — args already added
         } else if (cmd === 'codex' || cmd.includes('codex')) {
-            // Codex: write codex.md in project root (cwd)
-            const codexMdPath = join(process.cwd(), 'codex.md');
+            // Codex: write codex.md in agent's working directory (not hub process cwd)
+            const codexMdPath = join(this.options.cwd || process.cwd(), 'codex.md');
             const marker = '<!-- vibehq-system-prompt -->';
             let existing = '';
             if (existsSync(codexMdPath)) {
@@ -361,30 +361,29 @@ export class AgentSpawner {
     }
 
     /**
-     * Update ~/.codex/config.toml for Codex CLI.
-     * Uses agent-specific key `vibehq_{name}` to avoid race conditions.
-     * Cleans ALL vibehq_* entries first (global config → only this agent's entry needed).
+     * Clean vibehq_* entries from ~/.codex/config.toml.
+     * MCP config is now injected per-instance via the -c flag in spawnCli(),
+     * so the global config must stay clean to prevent cross-agent contamination:
+     * Codex loads ALL mcp_servers from the global config for every instance,
+     * so if agent A and agent B are both listed there, each Codex process
+     * starts both MCP servers — causing duplicate hub connections and broken comms.
      */
-    private configureCodexMcp(name: string, role: string, hubUrl: string, team: string): void {
+    private configureCodexMcp(_name: string, _role: string, _hubUrl: string, _team: string): void {
         const configPath = join(homedir(), '.codex', 'config.toml');
         if (!existsSync(configPath)) return;
 
         let content = readFileSync(configPath, 'utf-8');
 
-        // Agent-specific key
-        const serverKey = `vibehq_${name.toLowerCase().replace(/\s+/g, '_')}`;
-
-        // Remove ALL vibehq_* entries (stale entries from other teams/agents)
-        content = content.replace(/\[mcp_servers\.vibehq_[^\]]+\]\s*\n(?:(?!\[).*\n)*/g, '');
+        // Remove ALL vibehq_* sections (including nested .tools.* sub-tables).
+        // Use line-boundary matching: a section ends where a new [header] begins.
+        content = content.replace(/\[mcp_servers\.vibehq_[^\]]*\](?:\n(?!\[)[^\n]*)*\n?/g, '');
         // Also remove legacy shared 'team' key
-        content = content.replace(/\[mcp_servers\.team\]\s*\n(?:(?!\[).*\n)*/g, '');
-        content = content.trimEnd();
+        content = content.replace(/\[mcp_servers\.team\](?:\n(?!\[)[^\n]*)*\n?/g, '');
+        // Collapse excess blank lines
+        content = content.replace(/\n{3,}/g, '\n\n');
 
-        // Append only this agent's config
-        const teamBlock = `\n\n[mcp_servers.${serverKey}]\ncommand = "vibehq-agent"\nargs = ["--name", "${name}", "--role", "${role}", "--hub", "${hubUrl}", "--team", "${team}", "--cli", "${this.options.command}"]\n`;
-        content += teamBlock;
-
-        writeFileSync(configPath, content);
+        writeFileSync(configPath, content.trimEnd() + '\n');
+        console.error(`[Spawner] Codex global config cleaned — MCP injected per-instance via -c flag`);
     }
 
     /**
@@ -450,6 +449,17 @@ export class AgentSpawner {
                 console.error(`[Spawner] ${this.options.name}: orchestrator — implementation tools blocked via --disallowedTools`);
             }
         } else if (cmd === 'codex' || cmd.includes('codex')) {
+            // Inject this agent's MCP server via -c flag (per-instance, not global config).
+            // This ensures each Codex process only loads its OWN vibehq-agent MCP server,
+            // preventing cross-agent contamination from the shared ~/.codex/config.toml.
+            const mcpKey = `vibehq_${this.options.name.toLowerCase().replace(/\s+/g, '_')}`;
+            const mcpArgs = ['--name', this.options.name, '--role', this.options.role,
+                '--hub', this.options.hubUrl, '--team', this.options.team, '--cli', this.options.command];
+            // Build TOML inline table: {command="...",args=["...",...]}
+            const argsToml = '[' + mcpArgs.map(a => `"${a.replace(/"/g, '\\"')}"`).join(', ') + ']';
+            spawnArgs.push('-c', `mcp_servers.${mcpKey}={command="vibehq-agent",args=${argsToml}}`);
+            console.error(`[Spawner] ${this.options.name}: MCP injected via -c flag (key: ${mcpKey})`);
+
             // Codex orchestrator: use read-only sandbox to limit shell_command damage
             // NOTE: Codex cannot fully block shell_command — consider using Claude for orchestrator roles
             if (isOrchestrator) {
