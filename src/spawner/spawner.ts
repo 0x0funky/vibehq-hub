@@ -868,6 +868,49 @@ export class AgentSpawner {
      * Watches ~/.codex/sessions/YYYY/MM/DD/ for rollout-*.jsonl files.
      * Detects: task_started → working, task_complete → idle.
      */
+    private async inspectCodexRollout(filepath: string): Promise<{ matchesCwd: boolean; matchesMcp: boolean }> {
+        const targetCwd = normalizeAgentCwd(this.options.cwd || process.cwd());
+        const mcpKey = `vibehq_${this.options.name.toLowerCase().replace(/\s+/g, '_')}`;
+        const mcpToolPrefix = `mcp__${mcpKey}__`;
+
+        try {
+            const stat = statSync(filepath);
+            if (stat.size <= 0) return { matchesCwd: false, matchesMcp: false };
+
+            // session_meta is written at the top of the file; limit reads to keep polling cheap.
+            const bytesToRead = Math.min(stat.size, 64 * 1024);
+            const fh = await open(filepath, 'r');
+            const buf = Buffer.alloc(bytesToRead);
+            await fh.read(buf, 0, buf.length, 0);
+            await fh.close();
+
+            const lines = buf.toString('utf-8').split('\n').filter(l => l.trim());
+            let matchesCwd = false;
+            let matchesMcp = false;
+
+            for (const line of lines) {
+                if (!matchesMcp && line.includes(mcpToolPrefix)) {
+                    matchesMcp = true;
+                }
+
+                try {
+                    const msg = JSON.parse(line);
+                    if (!matchesCwd && msg.type === 'session_meta' && typeof msg.payload?.cwd === 'string') {
+                        matchesCwd = normalizeAgentCwd(msg.payload.cwd) === targetCwd;
+                    }
+                } catch {
+                    // ignore partial/malformed lines while Codex is still writing
+                }
+
+                if (matchesCwd && matchesMcp) break;
+            }
+
+            return { matchesCwd, matchesMcp };
+        } catch {
+            return { matchesCwd: false, matchesMcp: false };
+        }
+    }
+
     private watchCodexTranscript(): void {
         const sessionsDir = join(homedir(), '.codex', 'sessions');
 
@@ -910,6 +953,7 @@ export class AgentSpawner {
         let lockedOn = false;
         let lastKnownSize = 0;
         let staleTicks = 0;
+        let pollInFlight = false;
         // After lock-on, snapshot sizes of all files to detect session switches via /resume
         const sizeSnapshot = new Map<string, number>();
         for (const f of scanAllRollouts()) sizeSnapshot.set(f.path, f.size);
@@ -944,67 +988,95 @@ export class AgentSpawner {
             }
         };
 
+        const findBestCodexMatch = async (
+            files: Array<{ path: string; mtime: number; size: number }>
+        ): Promise<{ path: string; mtime: number; size: number } | null> => {
+            let cwdMatch: { path: string; mtime: number; size: number } | null = null;
+
+            for (const file of files) {
+                const identity = await this.inspectCodexRollout(file.path);
+                if (!identity.matchesCwd) continue;
+                if (identity.matchesMcp) return file;
+                if (!cwdMatch) cwdMatch = file;
+            }
+
+            return cwdMatch;
+        };
+
         const startWatch = () => {
             if (watching) return;
+            watching = true;
 
             // Phase 1: Wait for our Codex process to create its rollout file.
             // It will be a NEW file that didn't exist in preExistingFiles.
-            setInterval(() => {
-                if (!lockedOn) {
-                    const all = scanAllRollouts();
-                    const newFile = all.find(f => !preExistingFiles.has(f.path));
-                    if (newFile) {
-                        currentFile = newFile.path;
-                        fileOffset = 0;
-                        lastKnownSize = newFile.size;
-                        lockedOn = true;
-                        this.saveLogPath(currentFile);
-                        watching = true;
-                        // Update snapshot with the new file
-                        sizeSnapshot.set(newFile.path, newFile.size);
-                    }
-                    return;
-                }
+            setInterval(async () => {
+                if (pollInFlight) return;
+                pollInFlight = true;
 
-                // Phase 2: Locked on — tail our file, but detect session switches.
-                if (currentFile && existsSync(currentFile)) {
-                    const st = statSync(currentFile);
-                    if (st.size > lastKnownSize) {
-                        // Our file is still growing — all good
-                        lastKnownSize = st.size;
-                        staleTicks = 0;
-                        tailFile(currentFile);
-                        // Update snapshot
-                        sizeSnapshot.set(currentFile, st.size);
+                try {
+                    if (!lockedOn) {
+                        const all = scanAllRollouts();
+                        const newFiles = all.filter(f => !preExistingFiles.has(f.path));
+                        const matchedFile = await findBestCodexMatch(newFiles);
+                        for (const f of all) sizeSnapshot.set(f.path, f.size);
+
+                        if (matchedFile) {
+                            currentFile = matchedFile.path;
+                            fileOffset = 0;
+                            lastKnownSize = matchedFile.size;
+                            lockedOn = true;
+                            this.saveLogPath(currentFile);
+                            await tailFile(currentFile);
+                        }
                         return;
                     }
-                }
 
-                staleTicks++;
+                    // Phase 2: Locked on — tail our file, but detect session switches.
+                    if (currentFile && existsSync(currentFile)) {
+                        const st = statSync(currentFile);
+                        if (st.size > lastKnownSize) {
+                            // Our file is still growing — all good
+                            lastKnownSize = st.size;
+                            staleTicks = 0;
+                            await tailFile(currentFile);
+                            // Update snapshot
+                            sizeSnapshot.set(currentFile, st.size);
+                            return;
+                        }
+                    }
 
-                if (staleTicks < 5) {
-                    // Grace period (10s) — user might just be thinking
-                    if (currentFile) tailFile(currentFile);
-                    return;
-                }
+                    staleTicks++;
 
-                // Our file has been stale for 10s+ — check if user did /resume
-                // (switched to a different rollout file)
-                const all = scanAllRollouts();
-                for (const f of all) {
-                    const prevSize = sizeSnapshot.get(f.path) ?? 0;
-                    if (f.size > prevSize && f.path !== currentFile) {
-                        // A different file is growing — user switched sessions
-                        currentFile = f.path;
+                    if (staleTicks < 5) {
+                        // Grace period (10s) — user might just be thinking
+                        if (currentFile) await tailFile(currentFile);
+                        return;
+                    }
+
+                    // Our file has been stale for 10s+ — check if user did /resume
+                    // (switched to a different rollout file)
+                    const all = scanAllRollouts();
+                    const growingFiles = all.filter(f => {
+                        const prevSize = sizeSnapshot.get(f.path) ?? 0;
+                        return f.path !== currentFile && f.size > prevSize;
+                    });
+                    const matchedFile = await findBestCodexMatch(growingFiles);
+
+                    if (matchedFile) {
+                        const prevSize = sizeSnapshot.get(matchedFile.path) ?? 0;
+                        currentFile = matchedFile.path;
                         fileOffset = prevSize; // read only the new data
-                        lastKnownSize = f.size;
+                        lastKnownSize = matchedFile.size;
                         staleTicks = 0;
                         this.saveLogPath(currentFile);
                     }
-                    sizeSnapshot.set(f.path, f.size);
-                }
 
-                if (currentFile) tailFile(currentFile);
+                    for (const f of all) sizeSnapshot.set(f.path, f.size);
+
+                    if (currentFile) await tailFile(currentFile);
+                } finally {
+                    pollInFlight = false;
+                }
             }, 2000);
         };
 
