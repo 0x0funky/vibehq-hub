@@ -4,6 +4,7 @@
 
 import { Router } from 'express';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { getPresetByRole } from '../../tui/role-presets.js';
 
 export const agentsRouter = Router();
 
@@ -23,6 +24,18 @@ function saveTeams(configPath: string, teams: any[]): void {
 
 function findTeam(teams: any[], name: string) {
     return teams.find((t: any) => t.name === name);
+}
+
+function resolveSystemPrompt(role: string, rolePreset: unknown, systemPrompt: unknown): string | undefined {
+    if (typeof systemPrompt === 'string' && systemPrompt.trim()) {
+        return systemPrompt.trim();
+    }
+
+    const presetRole = typeof rolePreset === 'string' && rolePreset.trim()
+        ? rolePreset.trim()
+        : role;
+
+    return getPresetByRole(presetRole)?.defaultSystemPrompt;
 }
 
 // GET /api/teams/:team/agents
@@ -47,12 +60,13 @@ agentsRouter.post('/:team/agents', (req, res) => {
     const team = findTeam(teams, req.params.team);
     if (!team) { res.status(404).json({ error: 'Team not found' }); return; }
 
+    const role = req.body.role || 'Engineer';
     const agent = {
         name: req.body.name,
-        role: req.body.role || 'Engineer',
+        role,
         cli: req.body.cli || 'claude',
         cwd: req.body.cwd,
-        systemPrompt: req.body.systemPrompt,
+        systemPrompt: resolveSystemPrompt(role, req.body.rolePreset, req.body.systemPrompt),
         dangerouslySkipPermissions: req.body.dangerouslySkipPermissions,
         additionalDirs: req.body.additionalDirs,
     };

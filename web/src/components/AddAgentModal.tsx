@@ -1,17 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createAgent, pickFolder } from '../api';
-
-const ROLE_PRESETS = [
-    { role: 'Project Manager', description: 'Orchestrates team, defines tasks, tracks progress' },
-    { role: 'Frontend Engineer', description: 'Builds UI, connects to backend APIs' },
-    { role: 'Backend Engineer', description: 'Builds APIs, database, business logic' },
-    { role: 'Full Stack Engineer', description: 'Handles both frontend and backend' },
-    { role: 'AI Engineer', description: 'Builds AI/ML features, integrations, prompts' },
-    { role: 'Product Designer', description: 'UX/UI design, user research, prototypes' },
-    { role: 'QA Engineer', description: 'Testing, quality assurance, bug tracking' },
-    { role: 'Marketing Strategist', description: 'Brand strategy, campaigns, growth' },
-    { role: 'Custom', description: 'Define your own role' },
-];
+import { ROLE_PRESETS, getPresetByRole } from '../../../src/tui/role-presets.ts';
 
 const CLI_OPTIONS = ['claude', 'codex', 'gemini', 'aider', 'cursor'];
 
@@ -92,6 +81,11 @@ export function AddAgentModal({ team, onClose, onCreated }: Props) {
 
     const effectiveRole = selectedRole === 'Custom' ? customRole : selectedRole;
 
+    useEffect(() => {
+        if (!selectedRole) return;
+        setSystemPrompt(getPresetByRole(selectedRole)?.defaultSystemPrompt ?? '');
+    }, [selectedRole]);
+
     const handleBrowse = async () => {
         if (browsing) return;
         setBrowsing(true);
@@ -117,6 +111,7 @@ export function AddAgentModal({ team, onClose, onCreated }: Props) {
             await createAgent(team, {
                 name: name.trim(),
                 role: effectiveRole,
+                rolePreset: selectedRole,
                 cli,
                 cwd: cwd.trim(),
                 systemPrompt: systemPrompt.trim() || undefined,
@@ -187,12 +182,12 @@ export function AddAgentModal({ team, onClose, onCreated }: Props) {
                     </div>
 
                     {/* System Prompt */}
-                    <label style={s.label}>System Prompt (optional)</label>
+                    <label style={s.label}>System Prompt</label>
                     <textarea style={s.textarea} value={systemPrompt}
                         onChange={e => setSystemPrompt(e.target.value)}
-                        placeholder="Additional instructions for this agent..." />
+                        placeholder="Role preset prompt will appear here..." />
                     <div style={s.hint}>
-                        Leave empty to use the default system prompt for the selected role.
+                        Selecting a preset loads the same default system prompt used by TUI. You can edit it before creating the agent.
                     </div>
 
                     {/* Skip Permissions */}
