@@ -69,6 +69,7 @@ agentsRouter.post('/:team/agents', (req, res) => {
         cwd: normalizeAgentCwd(req.body.cwd || ''),
         systemPrompt: resolveSystemPrompt(role, req.body.rolePreset, req.body.systemPrompt),
         dangerouslySkipPermissions: req.body.dangerouslySkipPermissions,
+        codexDangerouslyBypassApprovalsAndSandbox: req.body.codexDangerouslyBypassApprovalsAndSandbox,
         additionalDirs: req.body.additionalDirs,
     };
     if (!agent.name || !agent.cwd) {

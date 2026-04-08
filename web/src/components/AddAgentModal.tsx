@@ -77,6 +77,7 @@ export function AddAgentModal({ team, onClose, onCreated }: Props) {
     const [cwd, setCwd] = useState('');
     const [systemPrompt, setSystemPrompt] = useState('');
     const [dangerouslySkipPermissions, setDangerouslySkipPermissions] = useState(false);
+    const [codexDangerouslyBypassApprovalsAndSandbox, setCodexDangerouslyBypassApprovalsAndSandbox] = useState(false);
     const [error, setError] = useState('');
     const [browsing, setBrowsing] = useState(false);
 
@@ -118,6 +119,9 @@ export function AddAgentModal({ team, onClose, onCreated }: Props) {
                 cwd: normalizedCwd,
                 systemPrompt: systemPrompt.trim() || undefined,
                 dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
+                codexDangerouslyBypassApprovalsAndSandbox: cli === 'codex' && codexDangerouslyBypassApprovalsAndSandbox
+                    ? true
+                    : undefined,
             });
             onCreated();
         } catch (err) {
@@ -198,6 +202,18 @@ export function AddAgentModal({ team, onClose, onCreated }: Props) {
                             onChange={e => setDangerouslySkipPermissions(e.target.checked)} />
                         <span>Skip permissions (Claude only, --dangerously-skip-permissions)</span>
                     </label>
+                    <label style={{ ...s.label, display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                        <input
+                            type="checkbox"
+                            checked={codexDangerouslyBypassApprovalsAndSandbox}
+                            disabled={cli !== 'codex'}
+                            onChange={e => setCodexDangerouslyBypassApprovalsAndSandbox(e.target.checked)}
+                        />
+                        <span>Bypass approvals and sandbox (Codex only)</span>
+                    </label>
+                    <div style={s.hint}>
+                        Starts Codex with <code>--dangerously-bypass-approvals-and-sandbox</code>. This gives Codex full access and stops permission prompts.
+                    </div>
 
                     {error && <div style={s.error}>{error}</div>}
 

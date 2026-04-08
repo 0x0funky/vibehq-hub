@@ -39,6 +39,7 @@ export interface SpawnerOptions {
     args: string[];
     systemPrompt?: string;
     dangerouslySkipPermissions?: boolean;
+    codexDangerouslyBypassApprovalsAndSandbox?: boolean;
     additionalDirs?: string[];
     cwd?: string;
     /** Auto-kickstart: inject initial prompt after startup. Only for benchmark/loop mode. */
@@ -460,9 +461,15 @@ export class AgentSpawner {
             spawnArgs.push('-c', `mcp_servers.${mcpKey}={command="vibehq-agent",args=${argsToml}}`);
             console.error(`[Spawner] ${this.options.name}: MCP injected via -c flag (key: ${mcpKey})`);
 
+            if (this.options.codexDangerouslyBypassApprovalsAndSandbox) {
+                spawnArgs.push('--dangerously-bypass-approvals-and-sandbox');
+                console.error(`[Spawner] ${this.options.name}: Codex full-access mode enabled — approvals and sandbox bypassed`);
+                if (isOrchestrator) {
+                    console.error(`[Spawner] ⚠️  WARNING: Codex orchestrator read-only sandbox disabled because full-access mode was enabled.`);
+                }
             // Codex orchestrator: use read-only sandbox to limit shell_command damage
             // NOTE: Codex cannot fully block shell_command — consider using Claude for orchestrator roles
-            if (isOrchestrator) {
+            } else if (isOrchestrator) {
                 spawnArgs.push('--sandbox', 'read-only');
                 console.error(`[Spawner] ${this.options.name}: orchestrator on Codex — enforcing read-only sandbox`);
                 console.error(`[Spawner] ⚠️  WARNING: Codex cannot fully block shell_command. Consider using Claude (cli: "claude") for orchestrator roles — it supports --disallowedTools for hard enforcement.`);

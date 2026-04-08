@@ -17,6 +17,7 @@ interface TeamConfig {
         cwd: string;
         systemPrompt?: string;
         dangerouslySkipPermissions?: boolean;
+        codexDangerouslyBypassApprovalsAndSandbox?: boolean;
         additionalDirs?: string[];
     }>;
 }

@@ -13,6 +13,7 @@ interface AgentConfig {
     cwd: string;
     systemPrompt?: string;
     dangerouslySkipPermissions?: boolean;
+    codexDangerouslyBypassApprovalsAndSandbox?: boolean;
     additionalDirs?: string[];
 }
 
@@ -60,6 +61,7 @@ export class PtyManager {
             cwd: agentConfig.cwd,
             systemPrompt: effectiveSystemPrompt,
             dangerouslySkipPermissions: agentConfig.dangerouslySkipPermissions,
+            codexDangerouslyBypassApprovalsAndSandbox: agentConfig.codexDangerouslyBypassApprovalsAndSandbox,
             additionalDirs: agentConfig.additionalDirs,
             webMode: true,
             cols: 120,
